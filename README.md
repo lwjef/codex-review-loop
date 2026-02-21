@@ -29,11 +29,17 @@ The Codex review covers:
 
 ## Installation
 
-```bash
-# Step 1: Add the marketplace
-/plugin marketplace add hamelsmu/claude-review-loop
+From the CLI:
 
-# Step 2: Install the plugin
+```bash
+claude plugin marketplace add hamelsmu/claude-review-loop
+claude plugin install review-loop@hamel-review
+```
+
+Or from within a Claude Code session:
+
+```
+/plugin marketplace add hamelsmu/claude-review-loop
 /plugin install review-loop@hamel-review
 ```
 
