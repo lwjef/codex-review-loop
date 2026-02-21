@@ -285,51 +285,31 @@ case "$PHASE" in
 
 Install it: npm install -g @openai/codex
 
-Then enable multi-agent — either:
-  1. Run codex, type /experimental, and enable Multi-agents
-  2. Or add to ~/.codex/config.toml:
-     [features]
-     multi_agent = true
-
-After installing, run /review-loop again."
+Then run /review-loop again. Multi-agent will be auto-configured."
       jq -n --arg r "$REASON" '{decision:"block", reason:$r}'
       exit 0
     fi
 
-    # Check that multi-agent is enabled in Codex config
+    # Ensure multi-agent is enabled in Codex config (auto-enable if missing)
     CODEX_CONFIG="${HOME}/.codex/config.toml"
-    if [ -f "$CODEX_CONFIG" ]; then
-      # Look for multi_agent = true in the [features] section
-      if ! grep -qE '^\s*multi_agent\s*=\s*true' "$CODEX_CONFIG"; then
-        log "ERROR: multi_agent not enabled in $CODEX_CONFIG"
-        rm -f "$STATE_FILE"
-        REASON="ERROR: Codex multi-agent is not enabled. The review loop requires parallel sub-agents for thorough reviews.
-
-Enable it — either:
-  1. Run codex, type /experimental, and enable Multi-agents
-  2. Or add to ~/.codex/config.toml:
-     [features]
-     multi_agent = true
-
-Then run /review-loop again."
-        jq -n --arg r "$REASON" '{decision:"block", reason:$r}'
-        exit 0
+    if [ ! -f "$CODEX_CONFIG" ]; then
+      log "Creating $CODEX_CONFIG with multi_agent enabled"
+      mkdir -p "${HOME}/.codex"
+      printf '[features]\nmulti_agent = true\n' > "$CODEX_CONFIG"
+    elif ! grep -qE '^\s*multi_agent\s*=\s*true' "$CODEX_CONFIG"; then
+      log "Enabling multi_agent in $CODEX_CONFIG"
+      if grep -qE '^\[features\]' "$CODEX_CONFIG"; then
+        # Append under existing [features] section
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+          sed -i '' '/^\[features\]/a\
+multi_agent = true' "$CODEX_CONFIG"
+        else
+          sed -i '/^\[features\]/a multi_agent = true' "$CODEX_CONFIG"
+        fi
+      else
+        # No [features] section yet — append one
+        printf '\n[features]\nmulti_agent = true\n' >> "$CODEX_CONFIG"
       fi
-    else
-      log "ERROR: no Codex config found at $CODEX_CONFIG"
-      rm -f "$STATE_FILE"
-      REASON="ERROR: No Codex config file found at ~/.codex/config.toml. The review loop requires Codex multi-agent.
-
-Enable it — either:
-  1. Run codex, type /experimental, and enable Multi-agents
-  2. Or create the config:
-     mkdir -p ~/.codex
-     echo '[features]' >> ~/.codex/config.toml
-     echo 'multi_agent = true' >> ~/.codex/config.toml
-
-Then run /review-loop again."
-      jq -n --arg r "$REASON" '{decision:"block", reason:$r}'
-      exit 0
     fi
 
     log "Starting Codex multi-agent review (flags: $CODEX_FLAGS)"
