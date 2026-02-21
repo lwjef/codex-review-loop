@@ -105,14 +105,14 @@ Your review MUST include ALL of these sections:
 - Type system usage and constraints
 - Agent guardrails and setup for success
 
-## UX & Design (only if the project has a user interface)
-- E2E workflow test coverage using agent-browser (https://agent-browser.dev/)
-  Install: claude install-skill https://agent-browser.dev
-  Use agent-browser to navigate the running app, perform end-to-end workflow tests,
-  and take screenshots to visually verify UX and design quality.
+## UX & Design (SKIP this section entirely if the project has no browser-based UI)
+- E2E workflow test coverage
 - Visual design quality and consistency
 - Accessibility considerations
 - Responsive design (test at desktop and mobile viewports)
+- If the project has a web UI, use agent-browser for E2E tests and screenshots:
+  Install: claude install-skill https://agent-browser.dev
+  Navigate the running app, test key workflows, and take screenshots to verify UX.
 
 For each issue found, provide:
 1. File path and line number
