@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # Review Loop — Stop Hook (customized fork)
 #
-# Two-phase lifecycle:
+# Three-phase lifecycle:
 #   Phase 1 (task):       Claude finishes work → hook runs Codex multi-agent review → blocks exit
-#   Phase 2 (addressing): Claude addresses review → hook allows exit
+#   Phase 2 (addressing): Claude addresses review findings → blocks exit
+#   Phase 3 (compound):   Claude extracts reusable lore → updates nearest AGENTS.md → allows exit
 #
 # On any error, default to allowing exit (never trap the user in a broken loop).
 #
 # Customizations over upstream (hamelsmu/claude-review-loop):
 #   - File-scoped reviews: only reviews files THIS agent modified (parallel agent safe)
 #   - Project conventions injected into diff review (anti-patterns from AGENTS.md)
+#   - Knowledge compounding: extracts lore from review findings into AGENTS.md + progress log
 #   - PostToolUse tracking file cleanup on completion
 #
 # Environment variables:
-#   REVIEW_LOOP_CODEX_FLAGS  Override codex flags (default: --dangerously-bypass-approvals-and-sandbox)
+#   REVIEW_LOOP_CODEX_FLAGS       Override codex flags (default: --dangerously-bypass-approvals-and-sandbox)
+#   REVIEW_LOOP_OUTPUT_DIR        Override output dir for learnings/progress
+#   REVIEW_LOOP_SKIP_COMPOUND     Set to "true" to skip compound phase
+#   REVIEW_LOOP_SKIP_QUALITY_CHECKS  Set to "true" to skip lint/typecheck
+#   REVIEW_LOOP_SKIP_MAP          Set to "true" to skip codebase-map
+#   REVIEW_LOOP_MAP_FORMAT        Override map format (default: graph)
 
 LOG_FILE=".claude/review-loop.log"
 
@@ -562,6 +569,113 @@ run_quality_checks() {
   rm -rf "$QUALITY_TMPDIR"
 }
 
+# ── Output dir resolution ─────────────────────────────────────────────────
+# Resolution chain (first match wins):
+#   1. REVIEW_LOOP_OUTPUT_DIR env var
+#   2. compound.config.json → outputDir (shared with compound loop)
+#   3. .claude/learnings/ (default fallback)
+resolve_output_dir() {
+  # 1. Explicit env override
+  if [ -n "${REVIEW_LOOP_OUTPUT_DIR:-}" ]; then
+    echo "$REVIEW_LOOP_OUTPUT_DIR"
+    return
+  fi
+
+  # 2. Compound config (shared dir)
+  if [ -f "compound.config.json" ]; then
+    local dir
+    dir=$(jq -r '.outputDir // empty' compound.config.json 2>/dev/null)
+    if [ -n "$dir" ]; then
+      echo "$dir"
+      return
+    fi
+  fi
+
+  # 3. Default
+  echo ".claude/learnings"
+}
+
+# ── Knowledge compounding ─────────────────────────────────────────────────
+# Builds the compound prompt that instructs Claude to:
+#   1. Parse review findings → classify as reusable vs task-specific
+#   2. Route reusable lore to nearest AGENTS.md (Least Common Ancestor)
+#   3. Append session learnings to progress.txt
+build_compound_prompt() {
+  local REVIEW_FILE="$1"
+  local SCOPED_FILES="$2"
+  local OUTPUT_DIR="$3"
+
+  # Derive directories with changed files for AGENTS.md routing
+  local CHANGED_DIRS
+  CHANGED_DIRS=$(echo "$SCOPED_FILES" | sed 's|^\./||' | xargs -I{} dirname {} 2>/dev/null | sort -u | grep -v '^\.$' || true)
+
+  cat << COMPOUND_EOF
+## Compound Phase: Extract Reusable Knowledge
+
+You just completed a review loop. Before finishing, extract reusable learnings from this session.
+
+### Review file to analyze
+Read: ${REVIEW_FILE}
+
+### Files you modified
+$(echo "$SCOPED_FILES" | sed 's/^/- /')
+
+### Instructions
+
+**Step 1: Identify reusable patterns from the review**
+
+Go through the review findings you addressed. For each one, classify:
+- **Reusable** — general pattern, gotcha, or convention that helps future agents
+- **Task-specific** — only relevant to this particular change (discard)
+
+Examples of REUSABLE learnings:
+- "When modifying X router, also update Y schema to keep them in sync"
+- "This module uses pattern Z for all API calls — follow it"
+- "Tests in this dir require mocking W service"
+- "Don't use pattern X here because of Y constraint"
+- "Always run Z after changing files in this directory"
+
+Examples of TASK-SPECIFIC (do NOT save):
+- "Fixed the bug in line 42 of foo.ts"
+- "Added error handling for the new endpoint"
+
+**Step 2: Update nearest AGENTS.md files**
+
+For each reusable learning, find the closest AGENTS.md in the directory tree of the affected files. Follow the Least Common Ancestor rule — place knowledge at the shallowest node that covers all affected files.
+
+Directories with changed files:
+$(echo "$CHANGED_DIRS" | sed 's/^/- /')
+
+Rules for updating AGENTS.md:
+- Add learnings under a relevant existing section, or create "## Learned Patterns" if none fits
+- Keep entries concise — one line per learning, fragment style
+- Do NOT add task-specific details, temporary notes, or duplicate existing entries
+- Check existing content first to avoid duplicates
+
+**Step 3: Append to progress log**
+
+Append a session entry to: ${OUTPUT_DIR}/progress.txt
+
+Format:
+\`\`\`
+## $(date -u +"%Y-%m-%dT%H:%M:%SZ") - Review Loop [${REVIEW_ID}]
+- Files changed: $(echo "$SCOPED_FILES" | wc -l | tr -d ' ') files
+- Review findings addressed: [count from review]
+- **Learnings for future iterations:**
+  - [each reusable pattern you identified]
+  - [gotchas encountered]
+---
+\`\`\`
+
+Also update the \`## Codebase Patterns\` section at the TOP of progress.txt with any general patterns (create section if missing).
+
+**Step 4: Done**
+
+After updating AGENTS.md files and progress.txt, you may stop.
+If no reusable learnings were found, just append a brief progress entry and stop.
+COMPOUND_EOF
+}
+
 # ── Cleanup session tracking files ────────────────────────────────────────
 cleanup_tracking() {
   if [ -n "$SESSION_ID" ]; then
@@ -661,15 +775,63 @@ Please:
 
 Use your own judgment. Do not blindly accept every suggestion."
 
-    SYS_MSG="Review Loop [${REVIEW_ID}] — Phase 2/2: Address Codex feedback"
+    SYS_MSG="Review Loop [${REVIEW_ID}] — Phase 2/3: Address Codex feedback"
 
     jq -n --arg r "$REASON" --arg s "$SYS_MSG" \
       '{decision:"block", reason:$r, systemMessage:$s}'
     ;;
 
   addressing)
-    # ── Phase 2 complete: Claude addressed the review. Allow exit. ───────
-    log "Review loop complete (review_id=$REVIEW_ID)"
+    # ── Phase 2 → 3: Transition to compound phase ────────────────────────
+
+    if [ "${REVIEW_LOOP_SKIP_COMPOUND:-false}" = "true" ]; then
+      log "Compound phase: skipped (REVIEW_LOOP_SKIP_COMPOUND=true)"
+      rm -f "$STATE_FILE"
+      cleanup_tracking
+      printf '{"decision":"approve"}\n'
+      exit 0
+    fi
+
+    # Resolve output dir and ensure it exists
+    OUTPUT_DIR=$(resolve_output_dir)
+    mkdir -p "$OUTPUT_DIR"
+
+    # Initialize progress file if needed
+    if [ ! -f "$OUTPUT_DIR/progress.txt" ]; then
+      {
+        echo "# Review Loop — Progress & Learnings"
+        echo "Started: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo ""
+        echo "## Codebase Patterns"
+        echo ""
+        echo "---"
+      } > "$OUTPUT_DIR/progress.txt"
+      log "Compound: initialized $OUTPUT_DIR/progress.txt"
+    fi
+
+    # Re-read scoped files for compound prompt
+    SCOPED_FILES=$(get_scoped_files)
+    REVIEW_FILE="reviews/review-${REVIEW_ID}.md"
+
+    # Transition to compound phase
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      sed -i '' 's/^phase: addressing$/phase: compound/' "$STATE_FILE"
+    else
+      sed -i 's/^phase: addressing$/phase: compound/' "$STATE_FILE"
+    fi
+
+    REASON=$(build_compound_prompt "$REVIEW_FILE" "$SCOPED_FILES" "$OUTPUT_DIR")
+    SYS_MSG="Review Loop [${REVIEW_ID}] — Phase 3/3: Extract reusable knowledge"
+
+    log "Compound phase: starting (output_dir=$OUTPUT_DIR)"
+
+    jq -n --arg r "$REASON" --arg s "$SYS_MSG" \
+      '{decision:"block", reason:$r, systemMessage:$s}'
+    ;;
+
+  compound)
+    # ── Phase 3 complete: Knowledge extracted. Allow exit. ────────────────
+    log "Review loop complete with compounding (review_id=$REVIEW_ID)"
     rm -f "$STATE_FILE"
     cleanup_tracking
     printf '{"decision":"approve"}\n'

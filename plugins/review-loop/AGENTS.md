@@ -2,10 +2,11 @@
 
 ## What this is
 
-A Claude Code plugin that creates a two-phase review loop:
+A Claude Code plugin with a three-phase review + compound loop:
 1. Claude implements a task
 2. Codex independently reviews the changes
 3. Claude addresses the review feedback
+4. Claude extracts reusable knowledge → updates nearest AGENTS.md + progress log
 
 Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-loop) with:
 - **File-scoped reviews** — PostToolUse hook tracks per-session modified files; Codex only reviews
@@ -13,6 +14,27 @@ Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-
 - **Project convention injection** — reads AGENTS.md/CLAUDE.md and feeds conventions to Codex
 - **AI anti-pattern checks** — detects mocks-to-pass-tests, code-replaced-with-comments,
   unused `_param` prefixes, hardcoded values, unnecessary type assertions
+- **Knowledge compounding** — extracts reusable lore from review findings, routes to nearest
+  AGENTS.md following Intent Layer architecture (Least Common Ancestor rule)
+- **Dependency map** — auto-scoped codebase-map injection for impacted modules
+
+## Three-phase lifecycle
+
+```
+Phase 1 (task):       Claude implements → Codex reviews (+ parallel lint/typecheck)
+Phase 2 (addressing): Claude fixes findings from review
+Phase 3 (compound):   Claude extracts lore → updates AGENTS.md + progress.txt
+```
+
+## Output dir resolution
+
+Learnings and progress are stored in a configurable output dir:
+
+1. `REVIEW_LOOP_OUTPUT_DIR` env var — explicit override
+2. `compound.config.json` → `outputDir` — shared with compound loop
+3. `.claude/learnings/` — default fallback (project-local)
+
+This means if compound loop is configured, review-loop shares the same progress.txt automatically.
 
 ## How file scoping works
 
@@ -21,6 +43,14 @@ Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-
 3. `Stop` hook reads that file → passes scoped file list to Codex
 4. Codex runs `git diff -- <file>` per file instead of reviewing entire repo
 5. Fallback chain: tracking file → transcript parsing → git diff (all changes)
+
+## How compounding works
+
+1. Review file is parsed for findings that were addressed (not skipped)
+2. Each finding classified: reusable pattern vs task-specific detail
+3. Reusable lore routed to nearest AGENTS.md (Least Common Ancestor)
+4. Session entry appended to `{output_dir}/progress.txt`
+5. General patterns added to `## Codebase Patterns` section at top of progress.txt
 
 ## Conventions
 
@@ -40,8 +70,10 @@ Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-
 
 ## Testing
 
-- After modifying stop-hook.sh, test all three paths: no-state, task→addressing, addressing→approve
+- After modifying stop-hook.sh, test all four paths: no-state, task→addressing, addressing→compound, compound→approve
 - Verify JSON output with `jq .` for each path
 - Test with codex unavailable (should fall back to self-review prompt)
 - Test with malformed state files (should fail-open)
 - Test file scoping: modify 2 files, verify only those appear in review scope
+- Test compound: verify AGENTS.md updates and progress.txt entries
+- Test output dir resolution: env var > compound.config.json > default

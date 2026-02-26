@@ -3,5 +3,11 @@
 .claude/review-loop.log
 .claude/modified-files-*.txt
 
+# Learnings output (default dir, project-specific)
+.claude/learnings/
+
 # Review artifacts (generated, not source)
 reviews/
+
+# Codebase map index
+.codebasemap
