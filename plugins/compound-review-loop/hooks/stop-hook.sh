@@ -114,6 +114,11 @@ get_scoped_files() {
     log "File scoping: fallback to git diff ($(echo "$files" | grep -c . || echo 0) files)"
   fi
 
+  # Relativize absolute paths (Claude Code sends absolute paths in tool_input)
+  local repo_root
+  repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  files=$(echo "$files" | sed "s|^${repo_root}/||" | grep -v '^$' | sort -u)
+
   echo "$files"
 }
 

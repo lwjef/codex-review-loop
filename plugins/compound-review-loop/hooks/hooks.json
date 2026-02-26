@@ -34,7 +34,7 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/stop-hook.sh",
-            "timeout": 900,
+            "timeout": 1800,
             "statusMessage": "Review loop: checking phase..."
           }
         ]
