@@ -327,24 +327,42 @@ For each issue: return file path, line number, severity (critical/high/medium/lo
 
 DIFF_EOF
 
-  # ── Agent 2: Holistic Review ──
-  cat << 'HOLISTIC_EOF'
+  # ── Agent 2: Holistic Review (scoped to changed modules) ──
+  # Build module-scoped directory list for holistic review
+  local HOLISTIC_SCOPE=""
+  if [ -n "$SCOPED_FILES" ]; then
+    local HOLISTIC_DIRS
+    HOLISTIC_DIRS=$(echo "$SCOPED_FILES" | sed 's|^\./||' | awk -F'/' '
+      /^(apps|services|packages|libs|modules)\/[^/]+/ { print $1"/"$2; next }
+      NF >= 2 { print $1; next }
+    ' | sort -u)
+    if [ -n "$HOLISTIC_DIRS" ]; then
+      HOLISTIC_SCOPE="SCOPE: Only review structure and conventions within these modules (where changes were made):
+$(echo "$HOLISTIC_DIRS" | sed 's/^/  - /')
+
+Read directory structure, config files, AGENTS.md / CLAUDE.md within these modules. Do NOT scan the entire repository."
+    fi
+  fi
+
+  cat << HOLISTIC_EOF
 ---
-AGENT 2: Holistic Review (evaluate overall project structure and agent readiness)
+AGENT 2: Holistic Review (evaluate structure and agent readiness of changed modules)
 
-Read the full project directory structure, key config files, README, and any AGENTS.md / CLAUDE.md files. This is NOT about individual line changes — it's about whether the project is well-structured for maintainability and agent-driven development.
+${HOLISTIC_SCOPE:-Read the project directory structure, key config files, README, and any AGENTS.md / CLAUDE.md files in modules where changes were made.}
 
-Review criteria for the whole project:
+This is NOT about individual line changes — it's about whether the changed modules are well-structured for maintainability and agent-driven development.
+
+Review criteria (scoped to changed modules):
 
 Code Organization & Modularity:
-- Is the project structure logical and navigable? Can a new developer (or agent) find things?
+- Is module structure logical and navigable? Can a new developer (or agent) find things?
 - Are concerns properly separated (data access, business logic, presentation, config)?
 - Are there god files/functions that do too much and should be split?
 - Is shared code properly extracted into reusable modules?
 - Are import paths clean (absolute imports, no deep relative paths)?
 
 Documentation & Agent Harness:
-- Does every major directory have an AGENTS.md with operating guidelines for agents?
+- Does the module have an AGENTS.md with operating guidelines for agents?
 - Is there a CLAUDE.md symlinked to each AGENTS.md for Claude Code compatibility?
 - Do AGENTS.md files document: conventions, file purposes, testing patterns, common pitfalls?
 - Is there telemetry/observability instrumentation (logging, metrics, tracing)?
@@ -353,11 +371,11 @@ Documentation & Agent Harness:
 - Are environment variables documented and validated at startup?
 - Are there clear boundaries between server-only and client-safe code?
 
-Architecture:
+Architecture (within module boundary):
 - Is the dependency graph clean (no circular dependencies)?
 - Are external integrations properly abstracted behind interfaces?
 - Is configuration centralized rather than scattered?
-- Is error handling consistent across the codebase?
+- Is error handling consistent across the module?
 
 For each issue: return file path (or directory), severity (critical/high/medium/low), category, description, and suggested fix.
 
