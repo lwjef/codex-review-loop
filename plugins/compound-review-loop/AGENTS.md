@@ -1,4 +1,4 @@
-# review-loop Plugin — Agent Guidelines
+# compound-review-loop Plugin — Agent Guidelines
 
 ## What this is
 

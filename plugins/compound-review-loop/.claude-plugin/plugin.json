@@ -1,5 +1,5 @@
 {
-  "name": "review-loop",
+  "name": "compound-review-loop",
   "version": "2.0.0",
   "description": "Automated code review loop with file-scoped reviews and project convention injection. Claude implements, Codex reviews independently, Claude addresses feedback.",
   "author": {

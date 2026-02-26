@@ -8,8 +8,8 @@
   },
   "plugins": [
     {
-      "name": "review-loop",
-      "source": "./plugins/review-loop",
+      "name": "compound-review-loop",
+      "source": "./plugins/compound-review-loop",
       "description": "Automated code review loop with file-scoped reviews. Claude implements, Codex reviews independently (only files this agent touched), Claude addresses feedback.",
       "author": {
         "name": "Hamel Husain"
