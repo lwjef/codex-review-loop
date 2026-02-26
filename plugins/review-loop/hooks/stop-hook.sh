@@ -364,6 +364,115 @@ IMPORTANT: You MUST create the file ${REVIEW_FILE} with the full review.
 CONSOLIDATION_EOF
 }
 
+# ── Parallel quality checks (lint + typecheck) ───────────────────────────
+# Runs alongside Codex review to avoid wasting time.
+# Auto-detects project tooling. Results appended to review file.
+#
+# Environment variables:
+#   REVIEW_LOOP_SKIP_QUALITY_CHECKS  Set to "true" to skip lint/typecheck
+run_quality_checks() {
+  local REVIEW_FILE="$1"
+  local SCOPED_FILES="$2"
+  local QUALITY_RESULTS=""
+  local QUALITY_TMPDIR
+  QUALITY_TMPDIR=$(mktemp -d)
+
+  if [ "${REVIEW_LOOP_SKIP_QUALITY_CHECKS:-false}" = "true" ]; then
+    log "Quality checks: skipped (REVIEW_LOOP_SKIP_QUALITY_CHECKS=true)"
+    return
+  fi
+
+  # Derive app directories from scoped files for targeted checks
+  local APP_DIRS
+  APP_DIRS=$(echo "$SCOPED_FILES" | sed 's|^\./||' | cut -d'/' -f1-2 | sort -u | grep -v '^$' || true)
+
+  log "Quality checks: starting (app dirs: $(echo "$APP_DIRS" | tr '\n' ', '))"
+
+  # ── TypeScript typecheck ──
+  (
+    if [ -f "tsconfig.json" ]; then
+      # Try project-level tsc first
+      npx tsc --noEmit 2>&1 | tail -30 > "${QUALITY_TMPDIR}/typecheck.txt"
+    elif [ -n "$APP_DIRS" ]; then
+      # Try per-app tsconfig
+      for dir in $APP_DIRS; do
+        if [ -f "${dir}/tsconfig.json" ]; then
+          echo "=== ${dir} ===" >> "${QUALITY_TMPDIR}/typecheck.txt"
+          npx tsc --noEmit --project "${dir}/tsconfig.json" 2>&1 | tail -20 >> "${QUALITY_TMPDIR}/typecheck.txt"
+        fi
+      done
+    fi
+  ) &
+  local TC_PID=$!
+
+  # ── Lint ──
+  (
+    if [ -f "biome.json" ] || [ -f "biome.jsonc" ]; then
+      # Biome — lint scoped files if available, otherwise full project
+      if [ -n "$SCOPED_FILES" ]; then
+        echo "$SCOPED_FILES" | xargs npx biome check --no-errors-on-unmatched 2>&1 | tail -30 > "${QUALITY_TMPDIR}/lint.txt"
+      else
+        npx biome check . --no-errors-on-unmatched 2>&1 | tail -30 > "${QUALITY_TMPDIR}/lint.txt"
+      fi
+    elif [ -f ".eslintrc.json" ] || [ -f ".eslintrc.js" ] || [ -f "eslint.config.js" ] || [ -f "eslint.config.mjs" ]; then
+      # ESLint — lint scoped files
+      if [ -n "$SCOPED_FILES" ]; then
+        echo "$SCOPED_FILES" | grep -E '\.(ts|tsx|js|jsx)$' | xargs npx eslint --no-error-on-unmatched-pattern 2>&1 | tail -30 > "${QUALITY_TMPDIR}/lint.txt"
+      else
+        npx eslint . 2>&1 | tail -30 > "${QUALITY_TMPDIR}/lint.txt"
+      fi
+    fi
+    # Python lint (ruff)
+    if echo "$SCOPED_FILES" | grep -q '\.py$'; then
+      local PY_FILES
+      PY_FILES=$(echo "$SCOPED_FILES" | grep '\.py$')
+      if command -v ruff &>/dev/null; then
+        echo "$PY_FILES" | xargs ruff check 2>&1 | tail -20 >> "${QUALITY_TMPDIR}/lint.txt"
+      fi
+    fi
+  ) &
+  local LINT_PID=$!
+
+  # Wait for both
+  wait $TC_PID 2>/dev/null || true
+  wait $LINT_PID 2>/dev/null || true
+
+  # Collect results
+  local TC_OUTPUT=""
+  local LINT_OUTPUT=""
+  [ -f "${QUALITY_TMPDIR}/typecheck.txt" ] && TC_OUTPUT=$(cat "${QUALITY_TMPDIR}/typecheck.txt")
+  [ -f "${QUALITY_TMPDIR}/lint.txt" ] && LINT_OUTPUT=$(cat "${QUALITY_TMPDIR}/lint.txt")
+
+  # Append to review file if there are findings
+  if [ -n "$TC_OUTPUT" ] || [ -n "$LINT_OUTPUT" ]; then
+    {
+      echo ""
+      echo "---"
+      echo "## Automated Quality Checks (ran in parallel with Codex review)"
+      echo ""
+      if [ -n "$TC_OUTPUT" ]; then
+        echo "### TypeScript Typecheck"
+        echo '```'
+        echo "$TC_OUTPUT"
+        echo '```'
+        echo ""
+      fi
+      if [ -n "$LINT_OUTPUT" ]; then
+        echo "### Lint"
+        echo '```'
+        echo "$LINT_OUTPUT"
+        echo '```'
+        echo ""
+      fi
+    } >> "$REVIEW_FILE"
+    log "Quality checks: appended results to $REVIEW_FILE"
+  else
+    log "Quality checks: no issues found"
+  fi
+
+  rm -rf "$QUALITY_TMPDIR"
+}
+
 # ── Cleanup session tracking files ────────────────────────────────────────
 cleanup_tracking() {
   if [ -n "$SESSION_ID" ]; then
@@ -419,10 +528,19 @@ Then run /review-loop again."
     fi
 
     log "Starting Codex multi-agent review (flags: $CODEX_FLAGS)"
+
+    # Run quality checks in parallel with Codex review (zero wasted time)
+    run_quality_checks "$REVIEW_FILE" "$SCOPED_FILES" &
+    QUALITY_PID=$!
+
     # shellcheck disable=SC2086
     codex $CODEX_FLAGS exec "$CODEX_PROMPT" >/dev/null 2>&1 || CODEX_EXIT=$?
     ELAPSED=$(( $(date +%s) - START_TIME ))
     log "Codex finished (exit=$CODEX_EXIT, elapsed=${ELAPSED}s)"
+
+    # Wait for quality checks to finish (usually done before Codex)
+    wait $QUALITY_PID 2>/dev/null || true
+    log "Quality checks finished"
 
     # Transition to addressing phase
     if [[ "$OSTYPE" == "darwin"* ]]; then

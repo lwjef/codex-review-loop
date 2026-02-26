@@ -1,5 +1,5 @@
 {
-  "description": "Review loop hooks: file tracking + Codex review after task completion",
+  "description": "Review loop hooks: file tracking, anti-pattern checks, Codex review + quality checks",
   "hooks": {
     "PostToolUse": [
       {
@@ -8,6 +8,21 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/track-modified.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-comment-replacement.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/check-unused-parameters.sh",
             "timeout": 5
           }
         ]
