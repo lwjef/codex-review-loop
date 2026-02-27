@@ -1,90 +1,99 @@
 # compound-review-loop (fork)
 
-> Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-loop) with
-> file-scoped reviews, knowledge compounding, and AI anti-pattern detection.
+> Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-loop) with parallel Codex reviews,
+> self-review, file-scoped reviews, knowledge compounding, and AI anti-pattern detection.
 
-A Claude Code plugin that adds an automated review + compound loop to your workflow. Every task
-gets an independent review, and every review compounds knowledge back into the codebase.
+A Claude Code plugin that adds automated review loops to your workflow. Every task gets independent reviews from multiple
+parallel Codex agents, and every review compounds knowledge back into the codebase.
 
 ## What it does
 
-When you use `/review-loop`, the plugin creates a three-phase lifecycle:
+### Always-on (every session)
 
-1. **Task phase**: You describe a task, Claude implements it
-2. **Review phase**: Stop hook runs [Codex](https://github.com/openai/codex) for independent review (+ parallel lint/typecheck), Claude addresses feedback
-3. **Compound phase**: Claude extracts reusable knowledge from the review, updates nearest AGENTS.md, logs learnings to progress file
+- **PostToolUse checks**: code→comment replacement detection, `_param` lazy refactoring detection
+- **Self-review**: randomized questions from 4 focus areas on every stop (implementation completeness, code quality,
+  integration, codebase consistency)
 
-The result: every task gets a second opinion from a different model, and every gotcha discovered
-becomes institutional knowledge that helps future agents.
+### On-demand (`/review-parallel`)
+
+Run N parallel Codex reviews on uncommitted changes — no review loop needed. 4 specialized agents (diff, holistic,
+security, tests) review independently and produce a combined report.
+
+### Full loop (`/review-loop`)
+
+Three-phase lifecycle:
+
+1. **Task phase**: Claude implements your task
+2. **Review phase**: Stop hook runs N parallel Codex reviews (+ lint/typecheck), Claude addresses feedback
+3. **Compound phase**: Claude extracts reusable knowledge, updates nearest AGENTS.md, logs learnings
 
 ## Fork additions
 
+### Parallel Codex reviews (N separate processes)
+
+Each review category runs as an independent `codex exec review` process. Dramatically more thorough than single-agent
+review — tested at 330KB/21 findings across 4 agents vs 2.2KB from single agent.
+
+Fallback: `REVIEW_LOOP_SINGLE_AGENT=true` for single process.
+
+### Self-review hook (from ClaudeKit)
+
+Always-on Stop hook that forces Claude to self-review before stopping. Randomized questions from 4 focus areas avoid
+pattern fatigue. Skips when review-loop is active (Codex handles it instead).
+
 ### File-scoped reviews (parallel agent safe)
 
-A `PostToolUse` hook tracks every file modified by Edit/Write tools during the session. When the
-Stop hook fires, Codex only reviews files THIS agent changed — not the entire repo.
+A `PostToolUse` hook tracks every file modified by Edit/Write tools during the session. When the Stop hook fires, Codex
+only reviews files THIS agent changed — not the entire repo.
 
-Multiple agents can work in parallel on different modules of the same branch, each getting a review
-scoped to its own changes.
-
-**Fallback chain**: tracking file → transcript parsing → full git diff
+Multiple agents can work in parallel on different modules, each getting a review scoped to its own changes.
 
 ### Project convention injection
 
-Reads `AGENTS.md` or `CLAUDE.md` from repo root and injects project conventions into the Codex
-review prompt. Codex reviews against YOUR standards, not generic ones.
+Reads `AGENTS.md` or `CLAUDE.md` from repo root and injects project conventions into each Codex review prompt.
 
 ### Auto-scoped dependency map
 
-If [codebase-map](https://www.npmjs.com/package/codebase-map) is installed, auto-derives impacted
-modules from changed files and injects a focused dependency graph into the review prompt. Monorepo-
-agnostic — detects `apps/`, `services/`, `packages/` boundaries automatically.
+If [codebase-map](https://www.npmjs.com/package/codebase-map) is installed, auto-derives impacted modules from changed
+files and injects a focused dependency graph. Monorepo-agnostic — detects `apps/`, `services/`, `packages/` boundaries.
 
 ### Real-time anti-pattern checks
 
-PostToolUse hooks fire on every Edit, catching issues instantly:
-- **Code→comment replacement** — blocks replacing code with `// removed` style comments
+PostToolUse hooks fire on every Edit:
+
+- **Code→comment replacement** — blocks replacing code with `// removed` comments
 - **Unused parameter prefixing** — blocks `param` → `_param` lazy refactoring
 
 ### AI anti-pattern detection (in Codex review)
 
-The diff review agent additionally checks for:
-- Mocks/stubs created just to pass tests
-- Hardcoded values that should use existing constants/enums
-- Code added on top without integrating into existing patterns
-- Over-engineered error handling for impossible scenarios
-- New utility functions duplicating existing ones
-- Unnecessary type assertions (`as any`, `!`) instead of fixing types
-- Feature flags or backward-compat shims when direct replacement was appropriate
+The diff review agent checks for: mocks/stubs to pass tests, hardcoded values that should use constants, code bolted on
+without integrating, over-engineered error handling, duplicate utility functions, unnecessary type assertions, feature
+flags where direct replacement fits.
 
 ### Parallel quality checks
 
-Lint and typecheck run **in parallel with Codex review** during the Stop hook — zero wasted time.
-Auto-detects tooling: biome/eslint for JS/TS, ruff for Python, tsc for typechecking.
+Lint and typecheck run **in parallel with Codex review** — zero wasted time. Auto-detects: biome/eslint for JS/TS, ruff
+for Python, tsc for typechecking.
 
 ### Knowledge compounding
 
-After addressing review findings, Claude enters a compound phase:
-1. Parses review findings — classifies each as **reusable** vs **task-specific**
-2. Routes reusable lore to nearest AGENTS.md (Least Common Ancestor rule)
-3. Appends session entry to `progress.txt` with learnings
-4. Updates `## Codebase Patterns` section at top of progress file
-
-Patterns discovered on Monday inform Tuesday's work. Inspired by
-[Every's compound engineering](https://every.to/guides/compound-engineering).
+After addressing findings, Claude extracts reusable knowledge: routes lore to nearest AGENTS.md (Least Common Ancestor),
+logs session learnings to `progress.txt`.
 
 ## Review coverage
 
-The plugin spawns up to 4 parallel Codex sub-agents, depending on project type:
+N parallel Codex processes, one per review category:
 
-| Agent | Always runs? | Focus |
-|-------|-------------|-------|
-| **Diff Review** | Yes | `git diff` — code quality, test coverage, security (OWASP top 10), AI anti-patterns |
-| **Holistic Review** | Yes | Project structure, documentation, AGENTS.md, agent harness, architecture |
-| **Next.js Review** | If `next.config.*` or `"next"` in `package.json` | App Router, Server Components, caching, Server Actions, React performance |
-| **UX Review** | If `app/`, `pages/`, `public/`, or `index.html` exists | Browser E2E via [agent-browser](https://agent-browser.dev/), accessibility, responsive design |
+| Agent                  | Always runs?                                     | Focus                                                              |
+| ---------------------- | ------------------------------------------------ | ------------------------------------------------------------------ |
+| **Diff Review**        | Yes                                              | Line-by-line code quality, test coverage, security, AI anti-patterns |
+| **Holistic Review**    | Yes                                              | Architecture, module structure, documentation, agent readiness     |
+| **Security Review**    | Yes                                              | Auth, injection, data protection, rate limiting, OWASP             |
+| **Test Coverage**      | Yes                                              | Missing tests, test quality, anti-patterns, integration gaps       |
+| **Next.js Review**     | If `next.config.*` or `"next"` in `package.json` | App Router, RSC, caching, Server Actions, React performance       |
 
-After all agents finish, Codex deduplicates findings and writes a single consolidated review to `reviews/review-<id>.md`.
+Each agent gets file scope + project conventions + category-specific criteria. Outputs merged into
+`reviews/review-<id>.md`.
 
 ## Requirements
 
@@ -94,17 +103,7 @@ After all agents finish, Codex deduplicates findings and writes a single consoli
 
 ### Optional
 
-- [codebase-map](https://www.npmjs.com/package/codebase-map) — `npm install -g codebase-map` (auto-scoped dependency maps)
-
-### Codex multi-agent
-
-This plugin uses Codex [multi-agent](https://developers.openai.com/codex/multi-agent/) to run parallel review agents. The `/review-loop` command automatically enables it in `~/.codex/config.toml` on first use.
-
-```toml
-# ~/.codex/config.toml
-[features]
-multi_agent = true
-```
+- [codebase-map](https://www.npmjs.com/package/codebase-map) — `npm install -g codebase-map` (dependency maps)
 
 ## Installation
 
@@ -131,12 +130,29 @@ Or from within a Claude Code session:
 ```
 
 Claude implements the task. When it finishes, the stop hook:
+
 1. Collects files this agent modified (PostToolUse tracking)
-2. Runs Codex review scoped to those files (+ parallel lint/typecheck)
-3. Injects AGENTS.md conventions + dependency map into review prompt
-4. Writes findings to `reviews/review-<id>.md`
+2. Launches N parallel Codex reviews scoped to those files (+ lint/typecheck)
+3. Injects AGENTS.md conventions + dependency map into each agent's prompt
+4. Merges findings into `reviews/review-<id>.md`
 5. Claude addresses findings
 6. Claude extracts reusable knowledge → updates AGENTS.md + progress.txt
+
+### On-demand parallel review
+
+```
+/review-parallel
+```
+
+Runs 4 parallel Codex reviews on uncommitted changes. No review loop session needed.
+
+### On-demand single review
+
+```
+/review-uncommitted
+```
+
+Lightweight single-agent Codex review on uncommitted changes.
 
 ### Cancel a review loop
 
@@ -148,18 +164,19 @@ Claude implements the task. When it finishes, the stop hook:
 
 ### Hooks
 
-| Hook | Event | Purpose |
-|------|-------|---------|
-| `track-modified.sh` | PostToolUse (Edit/Write) | Accumulate changed files per session |
-| `check-comment-replacement.sh` | PostToolUse (Edit) | Block code→comment replacement |
-| `check-unused-parameters.sh` | PostToolUse (Edit) | Block `_param` lazy refactoring |
-| `stop-hook.sh` | Stop | Three-phase lifecycle engine |
+| Hook                           | Event                    | Always-on? | Purpose                                |
+| ------------------------------ | ------------------------ | ---------- | -------------------------------------- |
+| `track-modified.sh`            | PostToolUse (Edit/Write) | Yes        | Accumulate changed files per session   |
+| `check-comment-replacement.sh` | PostToolUse (Edit)       | Yes        | Block code→comment replacement         |
+| `check-unused-parameters.sh`   | PostToolUse (Edit)       | Yes        | Block `_param` lazy refactoring        |
+| `self-review.sh`               | Stop                     | Yes        | Randomized self-review (4 focus areas) |
+| `stop-hook.sh`                 | Stop                     | Loop only  | N parallel Codex reviews + compounding |
 
 ### Three-phase Stop hook
 
 ```
 Phase 1 (task → addressing):
-  ├─ Codex multi-agent review (scoped to agent's files)
+  ├─ N parallel Codex reviews (scoped to agent's files)
   │   Context: AGENTS.md conventions + dependency map
   └─ Parallel: lint + typecheck
 
@@ -180,12 +197,15 @@ plugins/compound-review-loop/
 │   └── plugin.json                  # Plugin manifest
 ├── commands/
 │   ├── review-loop.md               # /review-loop slash command
-│   └── cancel-review.md             # /cancel-review slash command
+│   ├── review-parallel.md           # /review-parallel (on-demand, N agents)
+│   ├── review-uncommitted.md        # /review-uncommitted (on-demand, 1 agent)
+│   └── cancel-review.md             # /cancel-review
 ├── hooks/
 │   ├── hooks.json                   # Hook registration
 │   ├── track-modified.sh            # PostToolUse: file tracking
 │   ├── check-comment-replacement.sh # PostToolUse: code→comment check
 │   ├── check-unused-parameters.sh   # PostToolUse: _param check
+│   ├── self-review.sh               # Stop: always-on self-review
 │   └── stop-hook.sh                 # Stop: review + compound lifecycle
 ├── scripts/
 │   └── setup-review-loop.sh         # State file creation
@@ -194,41 +214,39 @@ plugins/compound-review-loop/
 
 ## Configuration
 
-### Output directory
-
-Learnings and progress are stored in a configurable directory:
-
-| Priority | Source | Example |
-|----------|--------|---------|
-| 1 | `REVIEW_LOOP_OUTPUT_DIR` env | `/path/to/learnings` |
-| 2 | `compound.config.json` → `outputDir` | `./scripts/compound` |
-| 3 | Default | `.claude/learnings/` |
-
-If your project uses the [compound engineering plugin](https://github.com/EveryInc/compound-engineering-plugin),
-the review loop automatically shares its output directory — same `progress.txt`, same patterns.
-
 ### Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REVIEW_LOOP_CODEX_FLAGS` | `--dangerously-bypass-approvals-and-sandbox` | Flags passed to `codex exec` |
-| `REVIEW_LOOP_OUTPUT_DIR` | auto-resolved | Override output dir for learnings/progress |
-| `REVIEW_LOOP_SKIP_COMPOUND` | `false` | Skip knowledge extraction phase |
-| `REVIEW_LOOP_SKIP_QUALITY_CHECKS` | `false` | Skip parallel lint/typecheck |
-| `REVIEW_LOOP_SKIP_MAP` | `false` | Skip codebase-map injection |
-| `REVIEW_LOOP_MAP_FORMAT` | `graph` | codebase-map format (`graph`, `dsl`, `tree`) |
+| Variable                          | Default                                      | Description                            |
+| --------------------------------- | -------------------------------------------- | -------------------------------------- |
+| `REVIEW_LOOP_CODEX_FLAGS`         | `--dangerously-bypass-approvals-and-sandbox` | Flags passed to `codex exec`           |
+| `REVIEW_LOOP_OUTPUT_DIR`          | auto-resolved                                | Override output dir for learnings      |
+| `REVIEW_LOOP_SINGLE_AGENT`        | `false`                                      | Disable parallel (single codex process)|
+| `REVIEW_LOOP_SKIP_COMPOUND`       | `false`                                      | Skip knowledge extraction phase        |
+| `REVIEW_LOOP_SKIP_QUALITY_CHECKS` | `false`                                      | Skip parallel lint/typecheck           |
+| `REVIEW_LOOP_SKIP_MAP`            | `false`                                      | Skip codebase-map injection            |
+| `REVIEW_LOOP_SKIP_SELF_REVIEW`    | `false`                                      | Disable self-review hook               |
+| `REVIEW_LOOP_MAP_FORMAT`          | `graph`                                      | codebase-map format                    |
+
+### Output directory
+
+Learnings and progress stored in configurable directory:
+
+| Priority | Source                               | Example              |
+| -------- | ------------------------------------ | -------------------- |
+| 1        | `REVIEW_LOOP_OUTPUT_DIR` env         | `/path/to/learnings` |
+| 2        | `compound.config.json` → `outputDir` | `./scripts/compound` |
+| 3        | Default                              | `.claude/learnings/` |
 
 ### Timeouts
 
-The stop hook timeout is 900 seconds (15 minutes) in `hooks/hooks.json`. PostToolUse hooks timeout
-at 5 seconds. Adjust in `hooks.json` if needed.
+Stop hook: 1800s (30 min) for parallel Codex reviews. Self-review: 30s. PostToolUse hooks: 5s. Adjust in `hooks.json`.
 
 ### Telemetry
 
-Execution logs are written to `.claude/review-loop.log` with timestamps, codex exit codes, and
-elapsed times. This file is gitignored.
+Execution logs: `.claude/review-loop.log` (timestamps, codex exit codes, elapsed times). Gitignored.
 
 ## Credits
 
-Original plugin by [Hamel Husain](https://github.com/hamelsmu). Compound engineering approach
-inspired by [Ryan Carson / Every](https://every.to/guides/compound-engineering).
+Original plugin by [Hamel Husain](https://github.com/hamelsmu). Compound engineering approach inspired by
+[Ryan Carson / Every](https://every.to/guides/compound-engineering). Self-review ported from
+[ClaudeKit](https://github.com/carlrannaberg/claudekit) by Carl Rannaberg.
