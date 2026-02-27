@@ -2,7 +2,7 @@
 # Review Loop — Stop Hook (customized fork)
 #
 # Three-phase lifecycle:
-#   Phase 1 (task):       Claude finishes work → hook runs Codex multi-agent review → blocks exit
+#   Phase 1 (task):       Claude finishes work → hook runs N parallel Codex reviews → blocks exit
 #   Phase 2 (addressing): Claude addresses review findings → blocks exit
 #   Phase 3 (compound):   Claude extracts reusable lore → updates nearest AGENTS.md → allows exit
 #
@@ -21,6 +21,7 @@
 #   REVIEW_LOOP_SKIP_QUALITY_CHECKS  Set to "true" to skip lint/typecheck
 #   REVIEW_LOOP_SKIP_MAP          Set to "true" to skip codebase-map
 #   REVIEW_LOOP_MAP_FORMAT        Override map format (default: graph)
+#   REVIEW_LOOP_SINGLE_AGENT      Set to "true" to use single codex process (default: parallel)
 
 # Resolve repo root — hooks may run from any CWD (e.g., apps/backend)
 # All .claude/ paths must be absolute to work regardless of CWD.
@@ -259,264 +260,433 @@ load_project_conventions() {
   echo "$conventions"
 }
 
-# ── Build the multi-agent review prompt ───────────────────────────────────
-build_review_prompt() {
-  local REVIEW_FILE="$1"
-  local SCOPED_FILES="$2"
+# ── Build shared review context (sets _CTX_* globals) ──────────────────
+# Must be called before any build_*_prompt function.
+build_review_context() {
+  local SCOPED_FILES="$1"
 
-  local IS_NEXTJS=false
-  local HAS_UI=false
-  detect_nextjs && IS_NEXTJS=true
-  detect_browser_ui && HAS_UI=true
+  _CTX_IS_NEXTJS=false
+  detect_nextjs && _CTX_IS_NEXTJS=true
+  log "Project detection: nextjs=$_CTX_IS_NEXTJS"
 
-  log "Project detection: nextjs=$IS_NEXTJS, browser_ui=$HAS_UI"
-
-  # Build file scope instruction
-  local FILE_SCOPE_INSTRUCTION=""
+  # File scope instruction
+  _CTX_FILE_SCOPE=""
   if [ -n "$SCOPED_FILES" ]; then
-    FILE_SCOPE_INSTRUCTION="IMPORTANT — FILE SCOPE: Only review changes in these specific files (this agent's modifications):
+    _CTX_FILE_SCOPE="IMPORTANT — FILE SCOPE: Only review these files (this agent's modifications):
 $(echo "$SCOPED_FILES" | sed 's/^/  - /')
 
-Use \`git diff -- <file>\` for each file above. Do NOT review unrelated changes in the repository."
+For tracked files: \`git diff -- <file>\`. For NEW (untracked) files: \`cat <file>\` (git diff shows nothing for untracked).
+Do NOT review unrelated changes."
   fi
 
-  # Load project conventions
+  # Project conventions
   local CONVENTIONS
   CONVENTIONS=$(load_project_conventions)
-  local CONVENTIONS_BLOCK=""
+  _CTX_CONVENTIONS=""
   if [ -n "$CONVENTIONS" ]; then
-    CONVENTIONS_BLOCK="
-PROJECT CONVENTIONS (from AGENTS.md — review against these standards):
+    _CTX_CONVENTIONS="PROJECT CONVENTIONS (from AGENTS.md):
 ---
 ${CONVENTIONS}
 ---"
   fi
 
-  # Generate scoped dependency map
+  # Dependency map
+  _CTX_MAP=""
   local MAP_OUTPUT
   MAP_OUTPUT=$(generate_scoped_map "$SCOPED_FILES")
-  local MAP_BLOCK=""
   if [ -n "$MAP_OUTPUT" ]; then
-    MAP_BLOCK="
-DEPENDENCY MAP (auto-generated for impacted modules — use for understanding relationships):
+    _CTX_MAP="DEPENDENCY MAP (impacted modules):
 \`\`\`
 ${MAP_OUTPUT}
 \`\`\`"
   fi
 
-  # ── Preamble ──
-  cat << PREAMBLE_EOF
-You are orchestrating a thorough, independent code review of recent changes in this repository.
-
-${FILE_SCOPE_INSTRUCTION}
-
-${CONVENTIONS_BLOCK}
-
-${MAP_BLOCK}
-
-Use multi-agent to run the following review agents IN PARALLEL. Each agent should return its findings as structured text. After ALL agents complete, consolidate their findings into a single deduplicated review.
-
-PREAMBLE_EOF
-
-  # ── Agent 1: Diff Review (with project-specific anti-patterns) ──
+  # Module dirs for holistic scope
+  _CTX_HOLISTIC_SCOPE=""
   if [ -n "$SCOPED_FILES" ]; then
-    local DIFF_CMD="For each scoped file listed above: run \`git diff -- <file>\` for tracked files. For NEW (untracked) files, run \`cat <file>\` to read the full content — \`git diff\` shows nothing for untracked files."
-  else
-    local DIFF_CMD="Run \`git diff\` and \`git diff --cached\` to see all uncommitted changes. Also run \`git log --oneline -5\` and \`git diff HEAD~5\` for recently committed work."
-  fi
-
-  cat << DIFF_EOF
----
-AGENT 1: Diff Review (focus on changed code ONLY)
-
-${DIFF_CMD}
-Focus your review EXCLUSIVELY on this changed code.
-
-Review criteria for changed code:
-
-Code Quality:
-- Is the changed code well-organized, modular, and readable?
-- Does it follow DRY principles — no copy-pasted blocks that should be abstracted?
-- Are names (variables, functions, files) clear and consistent with the codebase?
-- Are abstractions at the right level — not over-engineered, not under-abstracted?
-- Is there unnecessary complexity that could be simplified?
-
-Test Coverage:
-- Does every new function/endpoint/component have corresponding tests?
-- Are edge cases covered: empty inputs, nulls, boundary values, error paths?
-- Are tests isolated, deterministic, and fast?
-- Do tests verify behavior (not implementation details)?
-- For bug fixes: is there a regression test that would have caught the original bug?
-
-Security:
-- Input validation: are all user inputs validated and sanitized before use?
-- Authentication/authorization: are auth checks present on all protected routes/actions?
-- Injection: any risk of SQL injection, XSS, command injection, path traversal?
-- Secrets: are any credentials, API keys, or tokens hardcoded or logged?
-- OWASP Top 10: check for broken access control, cryptographic failures, insecure design, security misconfiguration, vulnerable dependencies, SSRF
-- Are error messages safe (no stack traces or internal details leaked to users)?
-
-AI Agent Anti-Patterns (CRITICAL — these are common AI coding mistakes):
-- Did the agent create mocks/stubs just to pass tests instead of testing real behavior?
-- Was real code replaced with comments like "// implementation here" or "// TODO"?
-- Are there unused parameters prefixed with underscore (_param) to suppress lint warnings?
-- Did the agent just add code on top without integrating into existing patterns?
-- Are there hardcoded values that should use existing constants/enums?
-- Was error handling added for impossible scenarios (over-engineering)?
-- Are there new utility functions that duplicate existing ones in the codebase?
-- Did the agent add unnecessary type assertions (as any, !) instead of fixing types?
-- Were feature flags or backward-compat shims added when direct replacement was appropriate?
-
-For each issue: return file path, line number, severity (critical/high/medium/low), category, description, and suggested fix.
-
-DIFF_EOF
-
-  # ── Agent 2: Holistic Review (scoped to changed modules) ──
-  # Build module-scoped directory list for holistic review
-  local HOLISTIC_SCOPE=""
-  if [ -n "$SCOPED_FILES" ]; then
-    local HOLISTIC_DIRS
-    HOLISTIC_DIRS=$(echo "$SCOPED_FILES" | sed 's|^\./||' | awk -F'/' '
+    local HDIRS
+    HDIRS=$(echo "$SCOPED_FILES" | sed 's|^\./||' | awk -F'/' '
       /^(apps|services|packages|libs|modules)\/[^/]+/ { print $1"/"$2; next }
       NF >= 2 { print $1; next }
     ' | sort -u)
-    if [ -n "$HOLISTIC_DIRS" ]; then
-      HOLISTIC_SCOPE="SCOPE: Only review structure and conventions within these modules (where changes were made):
-$(echo "$HOLISTIC_DIRS" | sed 's/^/  - /')
-
-Read directory structure, config files, AGENTS.md / CLAUDE.md within these modules. Do NOT scan the entire repository."
+    if [ -n "$HDIRS" ]; then
+      _CTX_HOLISTIC_SCOPE="SCOPE: Only review structure within these modules:
+$(echo "$HDIRS" | sed 's/^/  - /')
+Do NOT scan the entire repository."
     fi
   fi
+}
 
+# ── Per-agent prompt builders (call build_review_context first) ────────
+
+build_diff_prompt() {
+  local SCOPED_FILES="$1"
+  local DIFF_CMD
+  if [ -n "$SCOPED_FILES" ]; then
+    DIFF_CMD="For each scoped file listed above: run \`git diff -- <file>\` for tracked files. For NEW (untracked) files, run \`cat <file>\` to read the full content — \`git diff\` shows nothing for untracked files."
+  else
+    DIFF_CMD="Run \`git diff\` and \`git diff --cached\` to see all uncommitted changes. Also run \`git log --oneline -5\` and \`git diff HEAD~5\` for recently committed work."
+  fi
+
+  cat << DIFF_EOF
+You are performing an independent code review focused on the DIFF of recent changes.
+
+${_CTX_FILE_SCOPE}
+
+${_CTX_CONVENTIONS}
+
+${_CTX_MAP}
+
+${DIFF_CMD}
+Focus your review EXCLUSIVELY on changed code.
+
+Review criteria:
+
+Code Quality:
+- Well-organized, modular, readable?
+- DRY — no copy-pasted blocks that should be abstracted?
+- Clear, consistent names?
+- Right level of abstraction?
+- Unnecessary complexity?
+
+Test Coverage:
+- Every new function/endpoint/component has tests?
+- Edge cases: empty inputs, nulls, boundary values, error paths?
+- Tests isolated, deterministic, fast?
+- Tests verify behavior (not implementation)?
+- Bug fixes have regression tests?
+
+Security:
+- Input validation on all user inputs?
+- Auth checks on protected routes?
+- Injection risks (SQL, XSS, command, path traversal)?
+- No hardcoded secrets?
+- OWASP Top 10 checks
+- Error messages safe (no stack traces leaked)?
+
+AI Agent Anti-Patterns (CRITICAL):
+- Mocks/stubs just to pass tests instead of testing real behavior?
+- Real code replaced with "// implementation here" or "// TODO"?
+- Unused _param to suppress lint?
+- Hardcoded values that should use existing constants?
+- New utility functions duplicating existing ones?
+- Unnecessary type assertions (as any, !)?
+
+For each issue: [P0/P1/P2/P3] description — file:line
+P0=blocks ship, P1=must fix before merge, P2=should fix, P3=nice to have
+DIFF_EOF
+}
+
+build_holistic_prompt() {
   cat << HOLISTIC_EOF
----
-AGENT 2: Holistic Review (evaluate structure and agent readiness of changed modules)
+You are performing an independent code review focused on ARCHITECTURE and STRUCTURE of changed modules.
 
-${HOLISTIC_SCOPE:-Read the project directory structure, key config files, README, and any AGENTS.md / CLAUDE.md files in modules where changes were made.}
+${_CTX_FILE_SCOPE}
 
-This is NOT about individual line changes — it's about whether the changed modules are well-structured for maintainability and agent-driven development.
+${_CTX_MAP}
 
-Review criteria (scoped to changed modules):
+${_CTX_HOLISTIC_SCOPE:-Read directory structure, config files, AGENTS.md / CLAUDE.md in modules where changes were made.}
 
-Code Organization & Modularity:
-- Is module structure logical and navigable? Can a new developer (or agent) find things?
-- Are concerns properly separated (data access, business logic, presentation, config)?
-- Are there god files/functions that do too much and should be split?
-- Is shared code properly extracted into reusable modules?
-- Are import paths clean (absolute imports, no deep relative paths)?
+This is NOT about individual line changes — it's about whether changed modules are well-structured.
 
-Documentation & Agent Harness:
-- Does the module have an AGENTS.md with operating guidelines for agents?
-- Is there a CLAUDE.md symlinked to each AGENTS.md for Claude Code compatibility?
-- Do AGENTS.md files document: conventions, file purposes, testing patterns, common pitfalls?
-- Is there telemetry/observability instrumentation (logging, metrics, tracing)?
-- Is there a type system in use (TypeScript, Python type hints, etc.) with proper coverage?
-- Are there proper constraints and guardrails so agents working on the code are set up for success?
-- Are environment variables documented and validated at startup?
-- Are there clear boundaries between server-only and client-safe code?
+Review criteria:
+
+Code Organization:
+- Module structure logical and navigable?
+- Concerns properly separated (data access, business logic, presentation)?
+- God files/functions that should be split?
+- Shared code properly extracted?
+- Clean import paths?
+
+Documentation & Agent Readiness:
+- Module has AGENTS.md with guidelines?
+- AGENTS.md documents: conventions, file purposes, testing patterns, pitfalls?
+- Proper type coverage?
+- Environment variables documented and validated?
 
 Architecture (within module boundary):
-- Is the dependency graph clean (no circular dependencies)?
-- Are external integrations properly abstracted behind interfaces?
-- Is configuration centralized rather than scattered?
-- Is error handling consistent across the module?
+- Clean dependency graph (no circular deps)?
+- External integrations abstracted behind interfaces?
+- Configuration centralized?
+- Error handling consistent?
 
-For each issue: return file path (or directory), severity (critical/high/medium/low), category, description, and suggested fix.
-
+For each issue: [P0/P1/P2/P3] description — file:line (or directory)
+P0=blocks ship, P1=must fix before merge, P2=should fix, P3=nice to have
 HOLISTIC_EOF
+}
 
-  # ── Agent 3: Next.js Best Practices (conditional) ──
-  if [ "$IS_NEXTJS" = "true" ]; then
-    cat << 'NEXTJS_EOF'
----
-AGENT 3: Next.js & React Best Practices Review
+build_security_prompt() {
+  cat << SECURITY_EOF
+You are performing an independent SECURITY-focused code review of recent changes.
 
-This is a Next.js project. Review the codebase against these specific patterns:
+${_CTX_FILE_SCOPE}
+
+${_CTX_CONVENTIONS}
+
+For each scoped file: run \`git diff -- <file>\` for tracked files, \`cat <file>\` for untracked files.
+
+Authentication & Authorization:
+- Auth checks present on ALL protected routes/endpoints?
+- Authorization checked (not just authentication) — correct role/permissions?
+- Session management secure (expiry, rotation, invalidation)?
+- API keys/tokens not exposed in client-side code?
+
+Input Validation & Injection:
+- ALL user inputs validated and sanitized?
+- SQL injection risks (raw queries, string interpolation)?
+- XSS risks (unescaped output, innerHTML, dangerouslySetInnerHTML)?
+- Command injection (shell exec with user input)?
+- Path traversal (user input in file paths)?
+- SSRF (user-controlled URLs in server-side requests)?
+
+Data Protection:
+- Secrets/credentials hardcoded or logged?
+- PII exposure in logs, errors, or API responses?
+- Error messages leak internal details?
+- Sensitive data in URL params?
+
+Rate Limiting & Abuse:
+- New endpoints have rate limiting?
+- Expensive operations protected from abuse?
+- File upload limits and type validation?
+
+For each issue: [P0/P1/P2/P3] description — file:line
+P0=blocks ship (exploit possible), P1=must fix, P2=defense-in-depth, P3=hardening
+SECURITY_EOF
+}
+
+build_tests_prompt() {
+  cat << TESTS_EOF
+You are performing an independent code review focused on TEST QUALITY and COVERAGE.
+
+${_CTX_FILE_SCOPE}
+
+For each scoped file: run \`git diff -- <file>\` for tracked files, \`cat <file>\` for untracked files.
+Also examine existing test files in the same directories to understand testing patterns.
+
+Missing Coverage:
+- Every new public function/method has tests?
+- Every new API endpoint has request/response tests?
+- Error paths and exception handling tested?
+- Edge cases covered (empty, null, boundary, overflow)?
+
+Test Quality:
+- Tests verify BEHAVIOR, not implementation details?
+- Tests isolated (no shared mutable state)?
+- Tests deterministic (no flaky timing/order)?
+- Assertions specific enough to catch regressions?
+
+Anti-Patterns:
+- Mocking too much (testing mocks not real behavior)?
+- Testing private internals instead of public API?
+- Tests that always pass (tautological assertions)?
+- Overly broad error assertions?
+
+Integration:
+- DB-writing code tested with actual DB ops (not just mocks)?
+- API routes tested with full request cycle?
+- Multi-step workflows have integration tests?
+
+For each issue: [P0/P1/P2/P3] description — file:line
+P0=untested critical path, P1=significant gap, P2=should add, P3=nice to have
+TESTS_EOF
+}
+
+build_nextjs_prompt() {
+  cat << 'NEXTJS_EOF'
+You are performing an independent code review focused on NEXT.JS and REACT best practices.
+
+For each scoped file: run `git diff -- <file>` for tracked files, `cat <file>` for untracked files.
 
 App Router & Server Components:
-- Are Server Components used by default? Is 'use client' only added when interactivity is needed?
-- Is data fetched in Server Components, not Client Components?
-- Are Suspense boundaries used for streaming slow data sources?
-- Are file conventions correct: layout.tsx, page.tsx, loading.tsx, error.tsx, not-found.tsx?
-- Are searchParams and params handled as Promises (await searchParams / await params)?
-- Is generateStaticParams() used to pre-render known dynamic routes?
-- Is generateMetadata() used for SEO-critical pages?
-- Is notFound() called for missing resources instead of returning null?
+- Server Components by default? 'use client' only when needed?
+- Data fetched in Server Components, not Client Components?
+- Suspense boundaries for streaming?
+- Correct file conventions: layout.tsx, page.tsx, loading.tsx, error.tsx?
+- searchParams/params handled as Promises?
+- generateStaticParams() for known dynamic routes?
+- generateMetadata() for SEO-critical pages?
 
 Data Fetching & Caching:
-- Are parallel data fetches used (Promise.all) instead of sequential waterfalls?
-- Is cache strategy appropriate: no-store for fresh data, force-cache for static, revalidate for ISR?
-- Are cache tags used for fine-grained invalidation after mutations?
-- Is React.cache() used to deduplicate queries within a single request?
-
-Server Actions & Mutations:
-- Are Server Actions validated and auth-checked as if they were public API endpoints?
-- Is revalidateTag/revalidatePath called after mutations to invalidate cache?
-- Is after() used for non-blocking post-response work (logging, analytics)?
+- Parallel data fetches (Promise.all) vs sequential waterfalls?
+- Appropriate cache strategy (no-store/force-cache/revalidate)?
+- Cache tags for fine-grained invalidation?
 
 Performance & Bundle Size:
-- No barrel file imports — import directly from source paths?
-- Is next/dynamic with { ssr: false } used for heavy client-only components?
-- Are non-critical libraries (analytics, error tracking) deferred until after hydration?
-- Are heavy bundles preloaded on user intent (hover/focus)?
-- Is data minimized across the RSC boundary (only pass fields client needs)?
+- No barrel file imports?
+- next/dynamic for heavy client-only components?
+- Non-critical libraries deferred until after hydration?
+- Data minimized across RSC boundary?
 
 React Performance:
-- Is derived state calculated during render, not in effects?
-- Are expensive computations memoized appropriately?
-- Is useTransition used for non-urgent updates?
-- No unnecessary useEffect for things that belong in event handlers?
-- Are stable callback references used (functional setState, refs) to avoid re-render churn?
-- Is content-visibility: auto used for long lists?
-- Are inline scripts used to set client data before hydration (prevent FOUC)?
+- Derived state in render, not effects?
+- Expensive computations memoized?
+- useTransition for non-urgent updates?
+- No unnecessary useEffect for event handler work?
+- Stable callback references?
 
-For each issue: return file path, line number, severity (critical/high/medium/low), category, description, and suggested fix.
-
+For each issue: [P0/P1/P2/P3] description — file:line
+P0=blocks ship, P1=must fix before merge, P2=should fix, P3=nice to have
 NEXTJS_EOF
+}
+
+# ── Build single-agent review prompt (fallback for REVIEW_LOOP_SINGLE_AGENT=true) ──
+build_single_agent_prompt() {
+  local SCOPED_FILES="$1"
+
+  build_review_context "$SCOPED_FILES"
+
+  cat << SINGLE_EOF
+You are performing a thorough, independent code review of recent changes in this repository.
+
+${_CTX_FILE_SCOPE}
+
+${_CTX_CONVENTIONS}
+
+${_CTX_MAP}
+
+$(build_diff_prompt "$SCOPED_FILES")
+
+For each issue: [P0/P1/P2/P3] description — file:line
+P0=blocks ship, P1=must fix before merge, P2=should fix, P3=nice to have
+SINGLE_EOF
+}
+
+# ── Clean codex stderr output ──────────────────────────────────────────
+clean_codex_output() {
+  local FILE="$1"
+  [ -f "$FILE" ] || return
+
+  # Remove codex noise lines (session header, thinking traces, MCP startup)
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' '/^mcp:/d; /^Warning:/d; /^thinking$/d; /^exec$/d; /^user$/d; /^OpenAI Codex/d; /^--------$/d; /^workdir:/d; /^model:/d; /^provider:/d; /^approval:/d; /^sandbox:/d; /^reasoning/d; /^session id:/d' "$FILE"
+  else
+    sed -i '/^mcp:/d; /^Warning:/d; /^thinking$/d; /^exec$/d; /^user$/d; /^OpenAI Codex/d; /^--------$/d; /^workdir:/d; /^model:/d; /^provider:/d; /^approval:/d; /^sandbox:/d; /^reasoning/d; /^session id:/d' "$FILE"
   fi
 
-  # ── Agent 4: UX & Browser Testing (conditional) ──
-  if [ "$HAS_UI" = "true" ]; then
-    cat << 'UX_EOF'
----
-AGENT (UX): Browser-Based UX Review (SKIP if you cannot access a running dev server)
+  # Extract content after last "codex" marker (the actual review output)
+  if grep -q "^codex$" "$FILE" 2>/dev/null; then
+    local REVIEW_START
+    REVIEW_START=$(grep -n "^codex$" "$FILE" | tail -1 | cut -d: -f1)
+    if [ -n "$REVIEW_START" ]; then
+      tail -n +"$((REVIEW_START + 1))" "$FILE" > "${FILE}.clean"
+      mv "${FILE}.clean" "$FILE"
+    fi
+  fi
+}
 
-If the project has a running dev server, use agent-browser to test the UI.
-Install agent-browser if needed: npm install -g agent-browser (or: brew install agent-browser)
+# ── Parallel codex review execution ───────────────────────────────────
+run_parallel_codex_reviews() {
+  local REVIEW_FILE="$1"
+  local SCOPED_FILES="$2"
+  local CODEX_FLAGS="$3"
 
-Testing checklist:
-- Navigate to all major routes/pages
-- Test key user workflows end-to-end (signup, login, CRUD operations, etc.)
-- Take screenshots at desktop (1280x720) and mobile (375x812) viewports
-- Check for: broken layouts, missing error states, loading states, empty states
-- Verify accessibility: keyboard navigation, focus indicators, color contrast
-- Check responsive design at multiple breakpoints
-- Verify forms have proper validation feedback
-- Check that error messages are user-friendly
+  local TMPDIR
+  TMPDIR=$(mktemp -d)
+  local PIDS=()
+  local AGENT_NAMES=()
+  local AGENT_LABELS=()
+  local START_TIME
+  START_TIME=$(date +%s)
 
-If the dev server is not running or you cannot access it, skip this agent and note that UX testing was not performed.
+  # Build shared context (sets _CTX_* globals)
+  build_review_context "$SCOPED_FILES"
 
-For each issue: return screenshot description, severity, category, description, and suggested fix.
+  # Agent 1: Diff Review (always)
+  AGENT_NAMES+=("diff")
+  AGENT_LABELS+=("Diff Review")
+  local DIFF_PROMPT
+  DIFF_PROMPT=$(build_diff_prompt "$SCOPED_FILES")
+  # shellcheck disable=SC2086
+  codex exec review "$DIFF_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/diff.raw" &
+  PIDS+=($!)
 
-UX_EOF
+  # Agent 2: Holistic Review (always)
+  AGENT_NAMES+=("holistic")
+  AGENT_LABELS+=("Holistic Review")
+  local HOLISTIC_PROMPT
+  HOLISTIC_PROMPT=$(build_holistic_prompt)
+  # shellcheck disable=SC2086
+  codex exec review "$HOLISTIC_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/holistic.raw" &
+  PIDS+=($!)
+
+  # Agent 3: Security Review (always)
+  AGENT_NAMES+=("security")
+  AGENT_LABELS+=("Security Review")
+  local SECURITY_PROMPT
+  SECURITY_PROMPT=$(build_security_prompt)
+  # shellcheck disable=SC2086
+  codex exec review "$SECURITY_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/security.raw" &
+  PIDS+=($!)
+
+  # Agent 4: Test Coverage Review (always)
+  AGENT_NAMES+=("tests")
+  AGENT_LABELS+=("Test Coverage Review")
+  local TESTS_PROMPT
+  TESTS_PROMPT=$(build_tests_prompt)
+  # shellcheck disable=SC2086
+  codex exec review "$TESTS_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/tests.raw" &
+  PIDS+=($!)
+
+  # Agent 5: Next.js (conditional)
+  if [ "$_CTX_IS_NEXTJS" = "true" ]; then
+    AGENT_NAMES+=("nextjs")
+    AGENT_LABELS+=("Next.js Best Practices")
+    local NEXTJS_PROMPT
+    NEXTJS_PROMPT=$(build_nextjs_prompt)
+    # shellcheck disable=SC2086
+    codex exec review "$NEXTJS_PROMPT" $CODEX_FLAGS >/dev/null 2>"${TMPDIR}/nextjs.raw" &
+    PIDS+=($!)
   fi
 
-  # ── Consolidation instructions ──
-  cat << CONSOLIDATION_EOF
----
-CONSOLIDATION INSTRUCTIONS (after all agents complete):
+  local AGENT_COUNT=${#PIDS[@]}
+  log "Launched $AGENT_COUNT parallel codex agents"
 
-1. Collect all findings from all agents
-2. Deduplicate: if multiple agents flagged the same issue, keep the most detailed version
-3. Organize all findings by severity (critical first, then high, medium, low)
-4. For each finding, include:
-   - File path and line number (or directory for structural issues)
-   - Severity: critical / high / medium / low
-   - Category: which review path found it (Diff, Holistic, Next.js, UX)
-   - Description: clear explanation
-   - Suggested fix: concrete, actionable recommendation
-5. End with a summary: total issues, breakdown by severity, agents that ran, overall assessment
-CONSOLIDATION_EOF
+  # Wait for all agents
+  local FAILURES=0
+  for i in "${!PIDS[@]}"; do
+    wait "${PIDS[$i]}" || {
+      log "WARN: agent ${AGENT_NAMES[$i]} exited non-zero"
+      FAILURES=$((FAILURES + 1))
+    }
+  done
+
+  local ELAPSED=$(( $(date +%s) - START_TIME ))
+  log "All $AGENT_COUNT agents finished (elapsed=${ELAPSED}s, failures=$FAILURES)"
+
+  # Write review header
+  {
+    echo "# Code Review — ${AGENT_COUNT} Parallel Agents"
+    echo ""
+    echo "Review ID: ${REVIEW_ID}"
+    echo "Files reviewed: $(echo "$SCOPED_FILES" | grep -c . 2>/dev/null || echo 0)"
+    echo "Agents: ${AGENT_COUNT} | Duration: ${ELAPSED}s"
+    echo ""
+  } > "$REVIEW_FILE"
+
+  # Clean and merge each agent's output
+  for i in "${!AGENT_NAMES[@]}"; do
+    local name="${AGENT_NAMES[$i]}"
+    local label="${AGENT_LABELS[$i]}"
+    local raw="${TMPDIR}/${name}.raw"
+
+    clean_codex_output "$raw"
+
+    {
+      echo "---"
+      echo "## Agent $((i + 1)): ${label}"
+      echo ""
+    } >> "$REVIEW_FILE"
+
+    if [ -f "$raw" ] && [ -s "$raw" ]; then
+      cat "$raw" >> "$REVIEW_FILE"
+    else
+      echo "_No findings from this agent._" >> "$REVIEW_FILE"
+    fi
+    echo "" >> "$REVIEW_FILE"
+  done
+
+  rm -rf "$TMPDIR"
 }
 
 # ── Parallel quality checks (lint + typecheck) ───────────────────────────
@@ -755,12 +925,9 @@ case "$PHASE" in
     SCOPED_FILES=$(get_scoped_files)
     log "Scoped files for review: $(echo "$SCOPED_FILES" | tr '\n' ', ')"
 
-    CODEX_PROMPT=$(build_review_prompt "$REVIEW_FILE" "$SCOPED_FILES")
-
     # Run codex non-interactively with telemetry logging.
     CODEX_FLAGS="${REVIEW_LOOP_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}"
     CODEX_EXIT=0
-    START_TIME=$(date +%s)
 
     if ! command -v codex &> /dev/null; then
       log "ERROR: codex not found on PATH"
@@ -790,27 +957,30 @@ Then run /review-loop again."
       exit 0
     fi
 
-    log "Starting Codex multi-agent review (flags: $CODEX_FLAGS)"
+    log "Starting Codex review (flags: $CODEX_FLAGS, parallel=$( [ "${REVIEW_LOOP_SINGLE_AGENT:-false}" = "true" ] && echo "false" || echo "true" ))"
 
     # Run quality checks in parallel with Codex review (zero wasted time)
-    # Quality checks write to a SEPARATE temp file to avoid race condition
-    # with codex's 2> redirect (which truncates on open).
+    # Quality checks write to a SEPARATE temp file to avoid race condition.
     QUALITY_TMPFILE="${REVIEW_FILE}.quality"
     run_quality_checks "$QUALITY_TMPFILE" "$SCOPED_FILES" &
     QUALITY_PID=$!
 
-    # Use `codex exec review [PROMPT]` with custom instructions.
-    # Note: --uncommitted and [PROMPT] are mutually exclusive — we use [PROMPT] to
-    # inject project conventions, file scope, and anti-pattern checklists.
-    # The prompt tells Codex to `git diff` the specific files.
-    # Review output goes to stderr; capture to review file.
-    # shellcheck disable=SC2086
-    codex exec review "$CODEX_PROMPT" $CODEX_FLAGS \
-      >/dev/null 2>"$REVIEW_FILE" || CODEX_EXIT=$?
-    ELAPSED=$(( $(date +%s) - START_TIME ))
-    log "Codex finished (exit=$CODEX_EXIT, elapsed=${ELAPSED}s)"
+    if [ "${REVIEW_LOOP_SINGLE_AGENT:-false}" = "true" ]; then
+      # Single-agent mode: one codex process with combined prompt
+      CODEX_PROMPT=$(build_single_agent_prompt "$SCOPED_FILES")
+      START_TIME=$(date +%s)
+      # shellcheck disable=SC2086
+      codex exec review "$CODEX_PROMPT" $CODEX_FLAGS \
+        >/dev/null 2>"$REVIEW_FILE" || CODEX_EXIT=$?
+      ELAPSED=$(( $(date +%s) - START_TIME ))
+      log "Codex single-agent finished (exit=$CODEX_EXIT, elapsed=${ELAPSED}s)"
+      clean_codex_output "$REVIEW_FILE"
+    else
+      # Parallel mode: N separate codex processes, one per review category
+      run_parallel_codex_reviews "$REVIEW_FILE" "$SCOPED_FILES" "$CODEX_FLAGS"
+    fi
 
-    # Wait for quality checks to finish (usually done before Codex)
+    # Wait for quality checks to finish
     wait $QUALITY_PID 2>/dev/null || true
     log "Quality checks finished"
 
@@ -820,24 +990,6 @@ Then run /review-loop again."
       log "Quality checks: appended to review file"
     fi
     rm -f "$QUALITY_TMPFILE"
-
-    # Strip noise from stderr capture (MCP startup, thinking lines, exec traces, session header)
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' '/^mcp:/d; /^Warning:/d; /^thinking$/d; /^exec$/d; /^user$/d; /^OpenAI Codex/d; /^--------$/d; /^workdir:/d; /^model:/d; /^provider:/d; /^approval:/d; /^sandbox:/d; /^reasoning/d; /^session id:/d' "$REVIEW_FILE"
-    else
-      sed -i '/^mcp:/d; /^Warning:/d; /^thinking$/d; /^exec$/d; /^user$/d; /^OpenAI Codex/d; /^--------$/d; /^workdir:/d; /^model:/d; /^provider:/d; /^approval:/d; /^sandbox:/d; /^reasoning/d; /^session id:/d' "$REVIEW_FILE"
-    fi
-
-    # Extract just the final review (after "codex" marker — the actual review output)
-    # Codex stderr has: session header → thinking/exec traces → "codex\n<actual review>"
-    if grep -q "^codex$" "$REVIEW_FILE" 2>/dev/null; then
-      # Keep only content after the last "codex" line (the actual review)
-      REVIEW_START=$(grep -n "^codex$" "$REVIEW_FILE" | tail -1 | cut -d: -f1)
-      if [ -n "$REVIEW_START" ]; then
-        tail -n +"$((REVIEW_START + 1))" "$REVIEW_FILE" > "${REVIEW_FILE}.tmp"
-        mv "${REVIEW_FILE}.tmp" "$REVIEW_FILE"
-      fi
-    fi
 
     # Transition to addressing phase
     if [[ "$OSTYPE" == "darwin"* ]]; then
