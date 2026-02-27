@@ -54,11 +54,8 @@ if ! command -v jq &> /dev/null; then
   exit 1
 fi
 
-# Check for existing loop
-if ls .claude/review-loop-*.local.md 1>/dev/null 2>&1; then
-  echo "Error: A review loop is already active. Use /cancel-review to abort it first."
-  exit 1
-fi
+# Clean stale state and tracking files from previous sessions
+rm -f .claude/review-loop-*.local.md .claude/modified-files-*.txt 2>/dev/null || true
 
 # Generate unique ID: timestamp + random hex
 # Prefer openssl, fallback to /dev/urandom

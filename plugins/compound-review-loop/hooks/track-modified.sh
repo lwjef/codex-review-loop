@@ -9,6 +9,9 @@
 #
 # Receives JSON on stdin with tool_name and tool_input.file_path.
 
+LOG_FILE=".claude/review-loop.log"
+log() { mkdir -p "$(dirname "$LOG_FILE")"; echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [track] $*" >> "$LOG_FILE"; }
+
 INPUT=$(cat)
 
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
@@ -33,6 +36,7 @@ TRACK_FILE="${TRACK_DIR}/modified-files-${SESSION_ID}.txt"
 # State files without session_id are "pending" — created by /review-loop command.
 # First PostToolUse hook for a session claims it by writing session_id into the file.
 if [ -n "$SESSION_ID" ] && ! [ -f "$TRACK_FILE" ]; then
+  CLAIMED=""
   for sf in .claude/review-loop-*.local.md; do
     [ -f "$sf" ] || continue
     # Unclaimed = has no session_id line
@@ -43,9 +47,12 @@ session_id: ${SESSION_ID}" "$sf"
       else
         sed -i "/^started_at:/a session_id: ${SESSION_ID}" "$sf"
       fi
+      CLAIMED="$sf"
+      log "Claimed state file $sf for session $SESSION_ID"
       break
     fi
   done
+  [ -z "$CLAIMED" ] && log "WARN: no unclaimed state file found for session $SESSION_ID"
 fi
 
 # Append only if not already tracked (dedup)
