@@ -49,7 +49,7 @@ fi
 FILE_SCOPE="IMPORTANT — FILE SCOPE: Only review changes in these specific files:
 $(echo "$FILES" | sed 's/^/  - /')
 
-Run \`git diff -- <file>\` for each file above. Do NOT review unrelated changes."
+For each file: run \`git diff -- <file>\` for tracked files. For NEW (untracked) files, run \`cat <file>\` — git diff shows nothing for untracked files. Do NOT review unrelated changes."
 
 PROMPT="You are performing a thorough, independent code review of recent changes in this repository.
 

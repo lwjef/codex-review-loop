@@ -316,7 +316,7 @@ PREAMBLE_EOF
 
   # ── Agent 1: Diff Review (with project-specific anti-patterns) ──
   if [ -n "$SCOPED_FILES" ]; then
-    local DIFF_CMD="Run \`git diff -- <file>\` for each scoped file listed above."
+    local DIFF_CMD="For each scoped file listed above: run \`git diff -- <file>\` for tracked files. For NEW (untracked) files, run \`cat <file>\` to read the full content — \`git diff\` shows nothing for untracked files."
   else
     local DIFF_CMD="Run \`git diff\` and \`git diff --cached\` to see all uncommitted changes. Also run \`git log --oneline -5\` and \`git diff HEAD~5\` for recently committed work."
   fi
