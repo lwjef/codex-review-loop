@@ -20,27 +20,29 @@ echo "3. Running codex exec review --uncommitted..."
 OUTFILE="/tmp/codex-review-test-$(date +%s).md"
 START=$(date +%s)
 
-echo "Review the uncommitted changes for bugs and code quality issues." | \
-  codex exec review --uncommitted --dangerously-bypass-approvals-and-sandbox - \
+codex exec review --uncommitted --dangerously-bypass-approvals-and-sandbox \
   >/dev/null 2>"$OUTFILE" || true
 
 ELAPSED=$(( $(date +%s) - START ))
 SIZE=$(wc -c < "$OUTFILE" | tr -d ' ')
 
-echo "   Done in ${ELAPSED}s, output: ${SIZE} bytes → $OUTFILE"
+echo "   Done in ${ELAPSED}s, raw output: ${SIZE} bytes → $OUTFILE"
 
-# Strip noise
-sed -i '' '/^mcp:/d; /^Warning:/d; /^$/d' "$OUTFILE" 2>/dev/null || true
+# Extract final review (after last "codex" marker)
+if grep -q "^codex$" "$OUTFILE" 2>/dev/null; then
+  REVIEW_START=$(grep -n "^codex$" "$OUTFILE" | tail -1 | cut -d: -f1)
+  tail -n +"$((REVIEW_START + 1))" "$OUTFILE" > "${OUTFILE}.clean"
+  mv "${OUTFILE}.clean" "$OUTFILE"
+fi
+
 SIZE_CLEAN=$(wc -c < "$OUTFILE" | tr -d ' ')
 
 echo ""
 if [ "$SIZE_CLEAN" -gt 10 ]; then
-  echo "=== OUTPUT (first 50 lines) ==="
-  head -50 "$OUTFILE"
+  echo "=== REVIEW ($SIZE_CLEAN bytes) ==="
+  cat "$OUTFILE"
+  echo ""
   echo "=== END ==="
 else
   echo "FAIL: empty or near-empty output ($SIZE_CLEAN bytes after cleaning)"
-  echo ""
-  echo "Try running directly:"
-  echo '  echo "find bugs" | codex exec review --uncommitted --dangerously-bypass-approvals-and-sandbox - 2>&1 | head -30'
 fi

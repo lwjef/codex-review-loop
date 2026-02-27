@@ -756,7 +756,9 @@ case "$PHASE" in
     SCOPED_FILES=$(get_scoped_files)
     log "Scoped files for review: $(echo "$SCOPED_FILES" | tr '\n' ', ')"
 
-    CODEX_PROMPT=$(build_review_prompt "$REVIEW_FILE" "$SCOPED_FILES")
+    # Note: build_review_prompt() exists but is unused — Codex `review --uncommitted`
+    # does not accept custom prompts (mutually exclusive args). Codex uses its own
+    # review criteria which are effective (proven to find real P1/P2 bugs).
 
     # Run codex non-interactively with telemetry logging.
     CODEX_FLAGS="${REVIEW_LOOP_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}"
@@ -798,10 +800,11 @@ Then run /review-loop again."
     QUALITY_PID=$!
 
     # Use `codex exec review --uncommitted` — purpose-built for code review.
-    # Full review prompt (all agents + conventions + anti-patterns) passed as custom instructions.
-    # Review findings go to stderr; capture to review file.
+    # Note: --uncommitted and [PROMPT] are mutually exclusive in Codex CLI.
+    # Codex applies its own review criteria automatically.
+    # Review output goes to stderr; capture to review file.
     # shellcheck disable=SC2086
-    echo "$CODEX_PROMPT" | codex exec review --uncommitted $CODEX_FLAGS - \
+    codex exec review --uncommitted $CODEX_FLAGS \
       >/dev/null 2>"$REVIEW_FILE" || CODEX_EXIT=$?
     ELAPSED=$(( $(date +%s) - START_TIME ))
     log "Codex finished (exit=$CODEX_EXIT, elapsed=${ELAPSED}s)"
@@ -810,11 +813,23 @@ Then run /review-loop again."
     wait $QUALITY_PID 2>/dev/null || true
     log "Quality checks finished"
 
-    # Strip MCP startup noise from review file
+    # Strip noise from stderr capture (MCP startup, thinking lines, exec traces, session header)
     if [[ "$OSTYPE" == "darwin"* ]]; then
-      sed -i '' '/^mcp:/d; /^Warning:/d' "$REVIEW_FILE"
+      sed -i '' '/^mcp:/d; /^Warning:/d; /^thinking$/d; /^exec$/d; /^user$/d; /^OpenAI Codex/d; /^--------$/d; /^workdir:/d; /^model:/d; /^provider:/d; /^approval:/d; /^sandbox:/d; /^reasoning/d; /^session id:/d' "$REVIEW_FILE"
     else
-      sed -i '/^mcp:/d; /^Warning:/d' "$REVIEW_FILE"
+      sed -i '/^mcp:/d; /^Warning:/d; /^thinking$/d; /^exec$/d; /^user$/d; /^OpenAI Codex/d; /^--------$/d; /^workdir:/d; /^model:/d; /^provider:/d; /^approval:/d; /^sandbox:/d; /^reasoning/d; /^session id:/d' "$REVIEW_FILE"
+    fi
+
+    # Extract just the final review (after "codex" marker — the actual review output)
+    # Codex stderr has: session header → thinking/exec traces → "codex\n<actual review>"
+    if grep -q "^codex$" "$REVIEW_FILE" 2>/dev/null; then
+      # Keep only content after the last "codex" line (the actual review)
+      local REVIEW_START
+      REVIEW_START=$(grep -n "^codex$" "$REVIEW_FILE" | tail -1 | cut -d: -f1)
+      if [ -n "$REVIEW_START" ]; then
+        tail -n +"$((REVIEW_START + 1))" "$REVIEW_FILE" > "${REVIEW_FILE}.tmp"
+        mv "${REVIEW_FILE}.tmp" "$REVIEW_FILE"
+      fi
     fi
 
     # Transition to addressing phase
