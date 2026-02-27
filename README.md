@@ -1,7 +1,7 @@
 # codex-review
 
-> Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-loop) with parallel Codex reviews,
-> self-review, file-scoped reviews, knowledge compounding, and AI anti-pattern detection.
+> Based on [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-loop). Rewritten with parallel Codex
+> reviews, self-review, file-scoped reviews, knowledge compounding, and AI anti-pattern detection.
 
 A Claude Code plugin that adds automated review loops to your workflow. Every task gets independent reviews from multiple
 parallel Codex agents, and every review compounds knowledge back into the codebase.
