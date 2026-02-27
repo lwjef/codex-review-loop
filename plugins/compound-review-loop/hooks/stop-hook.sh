@@ -211,17 +211,17 @@ generate_scoped_map() {
 
   [ -z "$MODULE_DIRS" ] && return
 
-  # Build include patterns from module dirs
-  local INCLUDE_ARGS=""
+  # Build include args as an array (no eval needed)
+  local MAP_ARGS=()
   for dir in $MODULE_DIRS; do
-    INCLUDE_ARGS="${INCLUDE_ARGS} --include '${dir}/**'"
+    MAP_ARGS+=(--include "${dir}/**")
   done
 
   local MAP_FORMAT="${REVIEW_LOOP_MAP_FORMAT:-graph}"
 
   # Generate scoped map
   local MAP_OUTPUT
-  MAP_OUTPUT=$(eval "codebase-map format --format ${MAP_FORMAT} ${INCLUDE_ARGS}" 2>/dev/null)
+  MAP_OUTPUT=$(codebase-map format --format "$MAP_FORMAT" "${MAP_ARGS[@]}" 2>/dev/null)
 
   if [ -n "$MAP_OUTPUT" ]; then
     local MAP_BYTES
@@ -789,7 +789,10 @@ Then run /review-loop again."
     log "Starting Codex multi-agent review (flags: $CODEX_FLAGS)"
 
     # Run quality checks in parallel with Codex review (zero wasted time)
-    run_quality_checks "$REVIEW_FILE" "$SCOPED_FILES" &
+    # Quality checks write to a SEPARATE temp file to avoid race condition
+    # with codex's 2> redirect (which truncates on open).
+    QUALITY_TMPFILE="${REVIEW_FILE}.quality"
+    run_quality_checks "$QUALITY_TMPFILE" "$SCOPED_FILES" &
     QUALITY_PID=$!
 
     # Use `codex exec review [PROMPT]` with custom instructions.
@@ -806,6 +809,13 @@ Then run /review-loop again."
     # Wait for quality checks to finish (usually done before Codex)
     wait $QUALITY_PID 2>/dev/null || true
     log "Quality checks finished"
+
+    # Append quality check results AFTER codex is done (no race)
+    if [ -f "$QUALITY_TMPFILE" ] && [ -s "$QUALITY_TMPFILE" ]; then
+      cat "$QUALITY_TMPFILE" >> "$REVIEW_FILE"
+      log "Quality checks: appended to review file"
+    fi
+    rm -f "$QUALITY_TMPFILE"
 
     # Strip noise from stderr capture (MCP startup, thinking lines, exec traces, session header)
     if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -836,8 +846,7 @@ Then run /review-loop again."
       log "WARN: Codex produced no review findings (exit=$CODEX_EXIT)"
       rm -f "$REVIEW_FILE" "$STATE_FILE"
       cleanup_tracking
-      REASON="Codex review completed but found no issues. All changes look clean."
-      jq -n --arg r "$REASON" '{decision:"block", reason:$r}'
+      printf '{"decision":"approve"}\n'
       exit 0
     fi
 

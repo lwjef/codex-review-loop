@@ -18,7 +18,7 @@ command -v codex >/dev/null 2>&1 || { echo "ERROR: codex not installed (npm inst
 # 2. Collect changed files
 FILES=$(git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null)
 FILES=$(echo "$FILES" | sort -u | grep -v '^$' || true)
-FILE_COUNT=$(echo "$FILES" | grep -c . 2>/dev/null || echo 0)
+FILE_COUNT=$(echo "$FILES" | grep -c . 2>/dev/null) || FILE_COUNT=0
 
 if [ "$FILE_COUNT" -eq 0 ]; then
   echo "ERROR: No uncommitted changes found."

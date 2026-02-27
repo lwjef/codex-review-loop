@@ -55,7 +55,7 @@ if ! command -v jq &> /dev/null; then
 fi
 
 # Check for existing loop
-if [ -f ".claude/review-loop.local.md" ]; then
+if ls .claude/review-loop-*.local.md 1>/dev/null 2>&1; then
   echo "Error: A review loop is already active. Use /cancel-review to abort it first."
   exit 1
 fi
@@ -71,7 +71,7 @@ REVIEW_ID="$(date +%Y%m%d-%H%M%S)-${RAND_HEX}"
 
 # Create state file
 mkdir -p .claude
-cat > .claude/review-loop.local.md << STATE_EOF
+cat > ".claude/review-loop-${REVIEW_ID}.local.md" << STATE_EOF
 ---
 active: true
 phase: task

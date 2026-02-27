@@ -27,15 +27,21 @@ NEW_STRING=$(echo "$INPUT" | jq -r '.tool_input.new_string // ""' 2>/dev/null)
 
 # Count non-empty, non-comment lines in old vs new
 count_code_lines() {
-  echo "$1" | grep -v '^\s*$' | grep -cvE '^\s*(//|/\*|\*|#[^!]|--|<!--)' 2>/dev/null || echo 0
+  local n
+  n=$(echo "$1" | grep -v '^\s*$' | grep -cvE '^\s*(//|/\*|\*|#[^!]|--|<!--)' 2>/dev/null) || true
+  echo "${n:-0}"
 }
 
 count_comment_lines() {
-  echo "$1" | grep -v '^\s*$' | grep -cE '^\s*(//|/\*|\*|#[^!]|--|<!--)' 2>/dev/null || echo 0
+  local n
+  n=$(echo "$1" | grep -v '^\s*$' | grep -cE '^\s*(//|/\*|\*|#[^!]|--|<!--)' 2>/dev/null) || true
+  echo "${n:-0}"
 }
 
 count_nonempty() {
-  echo "$1" | grep -cv '^\s*$' 2>/dev/null || echo 0
+  local n
+  n=$(echo "$1" | grep -cv '^\s*$' 2>/dev/null) || true
+  echo "${n:-0}"
 }
 
 OLD_CODE=$(count_code_lines "$OLD_STRING")
