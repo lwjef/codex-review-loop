@@ -198,5 +198,5 @@ echo "Combined review: $REVIEW_FILE ($(wc -c < "$REVIEW_FILE" | tr -d ' ') bytes
 echo "Individual: ${OUTDIR}/*.raw"
 ```
 
-After the script completes, read the combined review file and present the findings to the user. Organize by severity
-(P0 first), deduplicate across agents, and include file paths.
+After the script completes, read the combined review file and present the findings to the user. Organize by severity (P0
+first), deduplicate across agents, and include file paths.

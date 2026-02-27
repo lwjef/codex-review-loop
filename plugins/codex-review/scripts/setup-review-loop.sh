@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Review Loop — Setup Script
+# Codex Review — Setup Script
 # Creates state file and prepares the review loop lifecycle.
 
 ARGS=()
@@ -55,7 +55,7 @@ if ! command -v jq &> /dev/null; then
 fi
 
 # Clean stale state and tracking files (>1 hour old, safe for parallel agents)
-find .claude -name "review-loop-*.local.md" -mmin +60 -delete 2>/dev/null || true
+find .claude -name "codex-review-*.local.md" -mmin +60 -delete 2>/dev/null || true
 find .claude -name "modified-files-*.txt" -mmin +60 -delete 2>/dev/null || true
 
 # Generate unique ID: timestamp + random hex
@@ -69,7 +69,7 @@ REVIEW_ID="$(date +%Y%m%d-%H%M%S)-${RAND_HEX}"
 
 # Create state file
 mkdir -p .claude
-cat > ".claude/review-loop-${REVIEW_ID}.local.md" << STATE_EOF
+cat > ".claude/codex-review-${REVIEW_ID}.local.md" << STATE_EOF
 ---
 active: true
 phase: task

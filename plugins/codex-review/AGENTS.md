@@ -7,22 +7,22 @@ compounding. Each agent in a parallel swarm gets a focused review of only THEIR 
 
 ## Hook Inventory
 
-| Hook | Event | Purpose | Always-on? |
-|------|-------|---------|------------|
-| `track-modified.sh` | PostToolUse (Edit/Write) | Track files this agent modified | Yes |
-| `check-comment-replacement.sh` | PostToolUse (Edit) | Detect code→comment replacement | Yes |
-| `check-unused-parameters.sh` | PostToolUse (Edit) | Detect `_param` lazy refactoring | Yes |
-| `self-review.sh` | Stop | Randomized self-review questions (4 focus areas) | Yes |
-| `stop-hook.sh` | Stop | N parallel Codex reviews + quality checks + compounding | Only with `/review-loop` |
+| Hook                           | Event                    | Purpose                                                 | Always-on?               |
+| ------------------------------ | ------------------------ | ------------------------------------------------------- | ------------------------ |
+| `track-modified.sh`            | PostToolUse (Edit/Write) | Track files this agent modified                         | Yes                      |
+| `check-comment-replacement.sh` | PostToolUse (Edit)       | Detect code→comment replacement                         | Yes                      |
+| `check-unused-parameters.sh`   | PostToolUse (Edit)       | Detect `_param` lazy refactoring                        | Yes                      |
+| `self-review.sh`               | Stop                     | Randomized self-review questions (4 focus areas)        | Yes                      |
+| `stop-hook.sh`                 | Stop                     | N parallel Codex reviews + quality checks + compounding | Only with `/review-loop` |
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `/review-loop` | Activate 3-phase review loop for current session |
-| `/review-parallel` | On-demand N parallel Codex reviews (standalone, no loop) |
-| `/review-uncommitted` | On-demand single-agent Codex review (lightweight) |
-| `/cancel-review` | Cancel active review loop |
+| Command               | Description                                              |
+| --------------------- | -------------------------------------------------------- |
+| `/review-loop`        | Activate 3-phase review loop for current session         |
+| `/review-parallel`    | On-demand N parallel Codex reviews (standalone, no loop) |
+| `/review-uncommitted` | On-demand single-agent Codex review (lightweight)        |
+| `/cancel-review`      | Cancel active review loop                                |
 
 ## Hard Requirements (NEVER violate)
 
@@ -49,24 +49,27 @@ Phase 3 (compound):   Claude extracts reusable lore → updates AGENTS.md + prog
 Default: N parallel processes. Fallback: `REVIEW_LOOP_SINGLE_AGENT=true` for single process.
 
 5 review categories (4 always + 1 conditional):
+
 1. **Diff Review** — line-by-line code changes, AI anti-patterns, DRY, naming
 2. **Holistic Review** — architecture, module structure, documentation, agent readiness
 3. **Security Review** — auth, injection, data protection, rate limiting
 4. **Test Coverage Review** — missing tests, test quality, anti-patterns, integration
 5. **Next.js Review** (conditional) — App Router, RSC, caching, bundle size, React performance
 
-Each agent gets: file scope instruction + project conventions + dependency map (where relevant) + category-specific
-review criteria. Outputs merged into single `reviews/review-{ID}.md` with per-agent sections.
+Each agent gets: file scope instruction + project conventions + dependency map (where relevant) + category-specific review
+criteria. Outputs merged into single `reviews/review-{ID}.md` with per-agent sections.
 
 ## Self-Review Hook (always-on)
 
 Fires on EVERY session stop (no `/review-loop` needed). Skips when:
+
 - `stop_hook_active=true` (review loop already handling)
-- Active review-loop state file exists
+- Active codex-review state file exists
 - No file changes in session
 - Already self-reviewed this cycle (marker: "Self-Review Complete")
 
 4 focus areas with randomized questions:
+
 1. Implementation Completeness — mocks, TODOs, hardcoded values
 2. Code Quality — DRY, complexity, cleanup
 3. Integration & Refactoring — bolt-on code, abstractions, hacks
@@ -84,8 +87,8 @@ codex exec review "$HOLISTIC_PROMPT" $FLAGS >/dev/null 2>"${TMPDIR}/holistic.raw
 codex exec review "$BIG_PROMPT_WITH_MULTI_AGENT_INSTRUCTIONS" $FLAGS >/dev/null 2>"$FILE"
 ```
 
-Stderr contains: session header → MCP startup → thinking/exec traces → `codex\n<actual review>`. Use
-`clean_codex_output()` to strip noise and extract after last `^codex$` marker.
+Stderr contains: session header → MCP startup → thinking/exec traces → `codex\n<actual review>`. Use `clean_codex_output()`
+to strip noise and extract after last `^codex$` marker.
 
 ## Gotchas
 
@@ -108,7 +111,7 @@ Stderr contains: session header → MCP startup → thinking/exec traces → `co
 
 ### Parallel agent safety
 
-- State files per session: `.claude/review-loop-{REVIEW_ID}.local.md`
+- State files per session: `.claude/codex-review-{REVIEW_ID}.local.md`
 - Tracking files per session: `.claude/modified-files-{SESSION_ID}.txt`
 - Stale file cleanup: `find -mmin +60` (time-based, not blanket `rm -f`)
 
@@ -119,16 +122,16 @@ Stderr contains: session header → MCP startup → thinking/exec traces → `co
 
 ## Environment Variables
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `REVIEW_LOOP_CODEX_FLAGS` | `--dangerously-bypass-approvals-and-sandbox` | Codex CLI flags |
-| `REVIEW_LOOP_OUTPUT_DIR` | `.claude/learnings/` | Knowledge compounding output |
-| `REVIEW_LOOP_SINGLE_AGENT` | `false` | Use single codex process (disable parallel) |
-| `REVIEW_LOOP_SKIP_COMPOUND` | `false` | Skip Phase 3 |
-| `REVIEW_LOOP_SKIP_QUALITY_CHECKS` | `false` | Skip lint/typecheck |
-| `REVIEW_LOOP_SKIP_MAP` | `false` | Skip codebase-map |
-| `REVIEW_LOOP_SKIP_SELF_REVIEW` | `false` | Disable self-review hook |
-| `REVIEW_LOOP_MAP_FORMAT` | `graph` | codebase-map output format |
+| Variable                          | Default                                      | Purpose                                     |
+| --------------------------------- | -------------------------------------------- | ------------------------------------------- |
+| `REVIEW_LOOP_CODEX_FLAGS`         | `--dangerously-bypass-approvals-and-sandbox` | Codex CLI flags                             |
+| `REVIEW_LOOP_OUTPUT_DIR`          | `.claude/learnings/`                         | Knowledge compounding output                |
+| `REVIEW_LOOP_SINGLE_AGENT`        | `false`                                      | Use single codex process (disable parallel) |
+| `REVIEW_LOOP_SKIP_COMPOUND`       | `false`                                      | Skip Phase 3                                |
+| `REVIEW_LOOP_SKIP_QUALITY_CHECKS` | `false`                                      | Skip lint/typecheck                         |
+| `REVIEW_LOOP_SKIP_MAP`            | `false`                                      | Skip codebase-map                           |
+| `REVIEW_LOOP_SKIP_SELF_REVIEW`    | `false`                                      | Disable self-review hook                    |
+| `REVIEW_LOOP_MAP_FORMAT`          | `graph`                                      | codebase-map output format                  |
 
 ## File Scoping
 
@@ -148,9 +151,9 @@ Stderr contains: session header → MCP startup → thinking/exec traces → `co
 ## Conventions
 
 - Shell: macOS + Linux compatible (`sed -i ''` vs `sed -i`)
-- State: `.claude/review-loop-*.local.md` — always clean up on exit
+- State: `.claude/codex-review-*.local.md` — always clean up on exit
 - Review ID: `YYYYMMDD-HHMMSS-hexhex` — validate `^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$`
-- Log: `.claude/review-loop.log` — structured timestamped lines
+- Log: `.claude/codex-review.log` — structured timestamped lines
 - Security: validate review IDs, no eval, no secrets in state files
 
 ## Testing

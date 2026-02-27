@@ -2,7 +2,7 @@
 # Self-Review — Stop Hook
 #
 # Lightweight, always-on quality gate. Forces Claude to self-review changes
-# before stopping. Fires on EVERY session stop, independent of /review-loop.
+# before stopping. Fires on EVERY session stop, independent of /review-loop
 #
 # Ported from ClaudeKit's self-review.ts (shell, no deps).
 #
@@ -27,15 +27,15 @@ if [ "${REVIEW_LOOP_SKIP_SELF_REVIEW:-false}" = "true" ]; then
   exit 0
 fi
 
-# Already inside a stop hook loop (review-loop is handling it)
+# Already inside a stop hook loop (codex review is handling it)
 STOP_HOOK_ACTIVE=$(echo "$HOOK_INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null || echo "false")
 if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
   printf '{"decision":"approve"}\n'
   exit 0
 fi
 
-# Active review-loop session exists → let stop-hook.sh handle it
-for sf in "${REPO_ROOT}"/.claude/review-loop-*.local.md; do
+# Active codex-review session exists → let stop-hook.sh handle it
+for sf in "${REPO_ROOT}"/.claude/codex-review-*.local.md; do
   [ -f "$sf" ] || continue
   if grep -q "^active: true" "$sf" 2>/dev/null; then
     printf '{"decision":"approve"}\n'

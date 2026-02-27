@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Review Loop — Stop Hook (customized fork)
+# Codex Review — Stop Hook
 #
 # Three-phase lifecycle:
 #   Phase 1 (task):       Claude finishes work → hook runs N parallel Codex reviews → blocks exit
@@ -8,9 +8,10 @@
 #
 # On any error, default to allowing exit (never trap the user in a broken loop).
 #
-# Customizations over upstream (hamelsmu/claude-review-loop):
+# Features:
+#   - N parallel Codex processes (diff, holistic, security, tests, +conditional nextjs)
 #   - File-scoped reviews: only reviews files THIS agent modified (parallel agent safe)
-#   - Project conventions injected into diff review (anti-patterns from AGENTS.md)
+#   - Project conventions injected into review prompts (from AGENTS.md)
 #   - Knowledge compounding: extracts lore from review findings into AGENTS.md + progress log
 #   - PostToolUse tracking file cleanup on completion
 #
@@ -27,7 +28,7 @@
 # All .claude/ paths must be absolute to work regardless of CWD.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
-LOG_FILE="${REPO_ROOT}/.claude/review-loop.log"
+LOG_FILE="${REPO_ROOT}/.claude/codex-review.log"
 
 log() {
   mkdir -p "$(dirname "$LOG_FILE")"
@@ -40,7 +41,7 @@ trap 'log "ERROR: hook exited via ERR trap (line $LINENO)"; printf "{\"decision\
 HOOK_INPUT=$(cat)
 
 # ── Find state file for THIS session ──────────────────────────────────
-# State files are per-review: .claude/review-loop-{REVIEW_ID}.local.md
+# State files are per-review: .claude/codex-review-{REVIEW_ID}.local.md
 # Linked to sessions via `session_id:` field (written by track-modified.sh)
 #
 # Fallback chain (Stop event may not include session_id):
@@ -56,13 +57,13 @@ STATE_FILE=""
 
 # Try 1: find by session_id
 if [ -n "$SESSION_ID" ]; then
-  STATE_FILE=$(grep -l "session_id: ${SESSION_ID}" "${REPO_ROOT}"/.claude/review-loop-*.local.md 2>/dev/null | head -1)
+  STATE_FILE=$(grep -l "session_id: ${SESSION_ID}" "${REPO_ROOT}"/.claude/codex-review-*.local.md 2>/dev/null | head -1)
 fi
 
 # Try 2: fallback — find active state files
 if [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; then
   ACTIVE_FILES=""
-  for sf in "${REPO_ROOT}"/.claude/review-loop-*.local.md; do
+  for sf in "${REPO_ROOT}"/.claude/codex-review-*.local.md; do
     [ -f "$sf" ] || continue
     if grep -q "^active: true" "$sf" 2>/dev/null; then
       ACTIVE_FILES="${ACTIVE_FILES}${sf}\n"
@@ -912,7 +913,7 @@ cleanup_tracking() {
   fi
   # Clean up stale tracking + state files older than 24h
   find "${REPO_ROOT}/.claude" -name "modified-files-*.txt" -mmin +1440 -delete 2>/dev/null || true
-  find "${REPO_ROOT}/.claude" -name "review-loop-*.local.md" -mmin +1440 -delete 2>/dev/null || true
+  find "${REPO_ROOT}/.claude" -name "codex-review-*.local.md" -mmin +1440 -delete 2>/dev/null || true
 }
 
 case "$PHASE" in

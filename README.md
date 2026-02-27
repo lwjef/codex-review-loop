@@ -16,8 +16,8 @@ parallel Codex agents, and every review compounds knowledge back into the codeba
 
 ### On-demand (`/review-parallel`)
 
-Run N parallel Codex reviews on uncommitted changes — no review loop needed. 4 specialized agents (diff, holistic,
-security, tests) review independently and produce a combined report.
+Run N parallel Codex reviews on uncommitted changes — no review loop needed. 4 specialized agents (diff, holistic, security,
+tests) review independently and produce a combined report.
 
 ### Full loop (`/review-loop`)
 
@@ -31,20 +31,20 @@ Three-phase lifecycle:
 
 ### Parallel Codex reviews (N separate processes)
 
-Each review category runs as an independent `codex exec review` process. Dramatically more thorough than single-agent
-review — tested at 330KB/21 findings across 4 agents vs 2.2KB from single agent.
+Each review category runs as an independent `codex exec review` process. Dramatically more thorough than single-agent review
+— tested at 330KB/21 findings across 4 agents vs 2.2KB from single agent.
 
 Fallback: `REVIEW_LOOP_SINGLE_AGENT=true` for single process.
 
 ### Self-review hook (from ClaudeKit)
 
-Always-on Stop hook that forces Claude to self-review before stopping. Randomized questions from 4 focus areas avoid
-pattern fatigue. Skips when review-loop is active (Codex handles it instead).
+Always-on Stop hook that forces Claude to self-review before stopping. Randomized questions from 4 focus areas avoid pattern
+fatigue. Skips when codex-review loop is active (Codex handles it instead).
 
 ### File-scoped reviews (parallel agent safe)
 
-A `PostToolUse` hook tracks every file modified by Edit/Write tools during the session. When the Stop hook fires, Codex
-only reviews files THIS agent changed — not the entire repo.
+A `PostToolUse` hook tracks every file modified by Edit/Write tools during the session. When the Stop hook fires, Codex only
+reviews files THIS agent changed — not the entire repo.
 
 Multiple agents can work in parallel on different modules, each getting a review scoped to its own changes.
 
@@ -54,8 +54,8 @@ Reads `AGENTS.md` or `CLAUDE.md` from repo root and injects project conventions 
 
 ### Auto-scoped dependency map
 
-If [codebase-map](https://www.npmjs.com/package/codebase-map) is installed, auto-derives impacted modules from changed
-files and injects a focused dependency graph. Monorepo-agnostic — detects `apps/`, `services/`, `packages/` boundaries.
+If [codebase-map](https://www.npmjs.com/package/codebase-map) is installed, auto-derives impacted modules from changed files
+and injects a focused dependency graph. Monorepo-agnostic — detects `apps/`, `services/`, `packages/` boundaries.
 
 ### Real-time anti-pattern checks
 
@@ -67,33 +67,32 @@ PostToolUse hooks fire on every Edit:
 ### AI anti-pattern detection (in Codex review)
 
 The diff review agent checks for: mocks/stubs to pass tests, hardcoded values that should use constants, code bolted on
-without integrating, over-engineered error handling, duplicate utility functions, unnecessary type assertions, feature
-flags where direct replacement fits.
+without integrating, over-engineered error handling, duplicate utility functions, unnecessary type assertions, feature flags
+where direct replacement fits.
 
 ### Parallel quality checks
 
-Lint and typecheck run **in parallel with Codex review** — zero wasted time. Auto-detects: biome/eslint for JS/TS, ruff
-for Python, tsc for typechecking.
+Lint and typecheck run **in parallel with Codex review** — zero wasted time. Auto-detects: biome/eslint for JS/TS, ruff for
+Python, tsc for typechecking.
 
 ### Knowledge compounding
 
-After addressing findings, Claude extracts reusable knowledge: routes lore to nearest AGENTS.md (Least Common Ancestor),
-logs session learnings to `progress.txt`.
+After addressing findings, Claude extracts reusable knowledge: routes lore to nearest AGENTS.md (Least Common Ancestor), logs
+session learnings to `progress.txt`.
 
 ## Review coverage
 
 N parallel Codex processes, one per review category:
 
-| Agent                  | Always runs?                                     | Focus                                                              |
-| ---------------------- | ------------------------------------------------ | ------------------------------------------------------------------ |
-| **Diff Review**        | Yes                                              | Line-by-line code quality, test coverage, security, AI anti-patterns |
-| **Holistic Review**    | Yes                                              | Architecture, module structure, documentation, agent readiness     |
-| **Security Review**    | Yes                                              | Auth, injection, data protection, rate limiting, OWASP             |
-| **Test Coverage**      | Yes                                              | Missing tests, test quality, anti-patterns, integration gaps       |
-| **Next.js Review**     | If `next.config.*` or `"next"` in `package.json` | App Router, RSC, caching, Server Actions, React performance       |
+| Agent               | Always runs?                                     | Focus                                                                |
+| ------------------- | ------------------------------------------------ | -------------------------------------------------------------------- |
+| **Diff Review**     | Yes                                              | Line-by-line code quality, test coverage, security, AI anti-patterns |
+| **Holistic Review** | Yes                                              | Architecture, module structure, documentation, agent readiness       |
+| **Security Review** | Yes                                              | Auth, injection, data protection, rate limiting, OWASP               |
+| **Test Coverage**   | Yes                                              | Missing tests, test quality, anti-patterns, integration gaps         |
+| **Next.js Review**  | If `next.config.*` or `"next"` in `package.json` | App Router, RSC, caching, Server Actions, React performance          |
 
-Each agent gets file scope + project conventions + category-specific criteria. Outputs merged into
-`reviews/review-<id>.md`.
+Each agent gets file scope + project conventions + category-specific criteria. Outputs merged into `reviews/review-<id>.md`.
 
 ## Requirements
 
@@ -110,14 +109,14 @@ Each agent gets file scope + project conventions + category-specific criteria. O
 From the CLI:
 
 ```bash
-claude plugin marketplace add dkorobtsov/claude-review-loop
+claude plugin marketplace add dkorobtsov/codex-review
 claude plugin install codex-review@dkorobtsov-review
 ```
 
 Or from within a Claude Code session:
 
 ```
-/plugin marketplace add dkorobtsov/claude-review-loop
+/plugin marketplace add dkorobtsov/codex-review
 /plugin install codex-review@dkorobtsov-review
 ```
 
@@ -216,16 +215,16 @@ plugins/codex-review/
 
 ### Environment variables
 
-| Variable                          | Default                                      | Description                            |
-| --------------------------------- | -------------------------------------------- | -------------------------------------- |
-| `REVIEW_LOOP_CODEX_FLAGS`         | `--dangerously-bypass-approvals-and-sandbox` | Flags passed to `codex exec`           |
-| `REVIEW_LOOP_OUTPUT_DIR`          | auto-resolved                                | Override output dir for learnings      |
-| `REVIEW_LOOP_SINGLE_AGENT`        | `false`                                      | Disable parallel (single codex process)|
-| `REVIEW_LOOP_SKIP_COMPOUND`       | `false`                                      | Skip knowledge extraction phase        |
-| `REVIEW_LOOP_SKIP_QUALITY_CHECKS` | `false`                                      | Skip parallel lint/typecheck           |
-| `REVIEW_LOOP_SKIP_MAP`            | `false`                                      | Skip codebase-map injection            |
-| `REVIEW_LOOP_SKIP_SELF_REVIEW`    | `false`                                      | Disable self-review hook               |
-| `REVIEW_LOOP_MAP_FORMAT`          | `graph`                                      | codebase-map format                    |
+| Variable                          | Default                                      | Description                             |
+| --------------------------------- | -------------------------------------------- | --------------------------------------- |
+| `REVIEW_LOOP_CODEX_FLAGS`         | `--dangerously-bypass-approvals-and-sandbox` | Flags passed to `codex exec`            |
+| `REVIEW_LOOP_OUTPUT_DIR`          | auto-resolved                                | Override output dir for learnings       |
+| `REVIEW_LOOP_SINGLE_AGENT`        | `false`                                      | Disable parallel (single codex process) |
+| `REVIEW_LOOP_SKIP_COMPOUND`       | `false`                                      | Skip knowledge extraction phase         |
+| `REVIEW_LOOP_SKIP_QUALITY_CHECKS` | `false`                                      | Skip parallel lint/typecheck            |
+| `REVIEW_LOOP_SKIP_MAP`            | `false`                                      | Skip codebase-map injection             |
+| `REVIEW_LOOP_SKIP_SELF_REVIEW`    | `false`                                      | Disable self-review hook                |
+| `REVIEW_LOOP_MAP_FORMAT`          | `graph`                                      | codebase-map format                     |
 
 ### Output directory
 
@@ -243,7 +242,7 @@ Stop hook: 1800s (30 min) for parallel Codex reviews. Self-review: 30s. PostTool
 
 ### Telemetry
 
-Execution logs: `.claude/review-loop.log` (timestamps, codex exit codes, elapsed times). Gitignored.
+Execution logs: `.claude/codex-review.log` (timestamps, codex exit codes, elapsed times). Gitignored.
 
 ## Credits
 
