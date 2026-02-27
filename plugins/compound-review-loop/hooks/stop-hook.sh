@@ -302,7 +302,7 @@ ${MAP_OUTPUT}
 
   # ── Preamble ──
   cat << PREAMBLE_EOF
-You are orchestrating a thorough, independent code review of recent changes in this repository.
+You are performing a thorough, independent code review of recent changes in this repository.
 
 ${FILE_SCOPE_INSTRUCTION}
 
@@ -310,9 +310,7 @@ ${CONVENTIONS_BLOCK}
 
 ${MAP_BLOCK}
 
-Use multi-agent to run the following review agents IN PARALLEL. Each agent should return its findings as structured text (not write to files). After ALL agents complete, consolidate their findings into a single deduplicated review file.
-
-IMPORTANT: Spawn one agent per review path below. Wait for all agents to finish. Then deduplicate overlapping findings and write the consolidated review to: ${REVIEW_FILE}
+Review the changes using the criteria below. For each issue found, output: file path, line number, severity (P0-P3), category, description, and suggested fix.
 
 PREAMBLE_EOF
 
@@ -499,25 +497,18 @@ For each issue: return screenshot description, severity, category, description, 
 UX_EOF
   fi
 
-  # ── Consolidation instructions ──
-  cat << CONSOLIDATION_EOF
+  # ── Output format instructions ──
+  cat << FORMAT_EOF
 ---
-CONSOLIDATION INSTRUCTIONS (after all agents complete):
+OUTPUT FORMAT:
 
-1. Collect all findings from all agents
-2. Deduplicate: if multiple agents flagged the same issue, keep the most detailed version
-3. Organize all findings by severity (critical first, then high, medium, low)
-4. For each finding, include:
-   - File path and line number (or directory for structural issues)
-   - Severity: critical / high / medium / low
-   - Category: which review path found it (Diff, Holistic, Next.js, UX)
-   - Description: clear explanation
-   - Suggested fix: concrete, actionable recommendation
-5. End with a summary: total issues, breakdown by severity, agents that ran, overall assessment
-6. Write the COMPLETE consolidated review to: ${REVIEW_FILE}
+Organize findings by severity (P0 critical first, then P1 high, P2 medium, P3 low).
+For each finding:
+- [P0-P3] Title — file:line
+  Description. Suggested fix.
 
-IMPORTANT: You MUST create the file ${REVIEW_FILE} with the full review.
-CONSOLIDATION_EOF
+End with summary: total issues by severity, overall assessment.
+FORMAT_EOF
 }
 
 # ── Parallel quality checks (lint + typecheck) ───────────────────────────
@@ -756,9 +747,7 @@ case "$PHASE" in
     SCOPED_FILES=$(get_scoped_files)
     log "Scoped files for review: $(echo "$SCOPED_FILES" | tr '\n' ', ')"
 
-    # Note: build_review_prompt() exists but is unused — Codex `review --uncommitted`
-    # does not accept custom prompts (mutually exclusive args). Codex uses its own
-    # review criteria which are effective (proven to find real P1/P2 bugs).
+    CODEX_PROMPT=$(build_review_prompt "$REVIEW_FILE" "$SCOPED_FILES")
 
     # Run codex non-interactively with telemetry logging.
     CODEX_FLAGS="${REVIEW_LOOP_CODEX_FLAGS:---dangerously-bypass-approvals-and-sandbox}"
@@ -799,12 +788,13 @@ Then run /review-loop again."
     run_quality_checks "$REVIEW_FILE" "$SCOPED_FILES" &
     QUALITY_PID=$!
 
-    # Use `codex exec review --uncommitted` — purpose-built for code review.
-    # Note: --uncommitted and [PROMPT] are mutually exclusive in Codex CLI.
-    # Codex applies its own review criteria automatically.
+    # Use `codex exec review [PROMPT]` with custom instructions.
+    # Note: --uncommitted and [PROMPT] are mutually exclusive — we use [PROMPT] to
+    # inject project conventions, file scope, and anti-pattern checklists.
+    # The prompt tells Codex to `git diff` the specific files.
     # Review output goes to stderr; capture to review file.
     # shellcheck disable=SC2086
-    codex exec review --uncommitted $CODEX_FLAGS \
+    codex exec review "$CODEX_PROMPT" $CODEX_FLAGS \
       >/dev/null 2>"$REVIEW_FILE" || CODEX_EXIT=$?
     ELAPSED=$(( $(date +%s) - START_TIME ))
     log "Codex finished (exit=$CODEX_EXIT, elapsed=${ELAPSED}s)"
