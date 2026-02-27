@@ -22,7 +22,11 @@
 #   REVIEW_LOOP_SKIP_MAP          Set to "true" to skip codebase-map
 #   REVIEW_LOOP_MAP_FORMAT        Override map format (default: graph)
 
-LOG_FILE=".claude/review-loop.log"
+# Resolve repo root — hooks may run from any CWD (e.g., apps/backend)
+# All .claude/ paths must be absolute to work regardless of CWD.
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+
+LOG_FILE="${REPO_ROOT}/.claude/review-loop.log"
 
 log() {
   mkdir -p "$(dirname "$LOG_FILE")"
@@ -51,13 +55,13 @@ STATE_FILE=""
 
 # Try 1: find by session_id
 if [ -n "$SESSION_ID" ]; then
-  STATE_FILE=$(grep -l "session_id: ${SESSION_ID}" .claude/review-loop-*.local.md 2>/dev/null | head -1)
+  STATE_FILE=$(grep -l "session_id: ${SESSION_ID}" "${REPO_ROOT}"/.claude/review-loop-*.local.md 2>/dev/null | head -1)
 fi
 
 # Try 2: fallback — find active state files
 if [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; then
   ACTIVE_FILES=""
-  for sf in .claude/review-loop-*.local.md; do
+  for sf in "${REPO_ROOT}"/.claude/review-loop-*.local.md; do
     [ -f "$sf" ] || continue
     if grep -q "^active: true" "$sf" 2>/dev/null; then
       ACTIVE_FILES="${ACTIVE_FILES}${sf}\n"
@@ -121,7 +125,7 @@ get_scoped_files() {
 
   # Method 1: PostToolUse tracking file (most accurate)
   if [ -n "$SESSION_ID" ]; then
-    local track_file=".claude/modified-files-${SESSION_ID}.txt"
+    local track_file="${REPO_ROOT}/.claude/modified-files-${SESSION_ID}.txt"
     if [ -f "$track_file" ]; then
       files=$(cat "$track_file")
       log "File scoping: found $(wc -l < "$track_file" | tr -d ' ') files from tracking"
@@ -647,7 +651,7 @@ resolve_output_dir() {
   fi
 
   # 3. Default
-  echo ".claude/learnings"
+  echo "${REPO_ROOT}/.claude/learnings"
 }
 
 # ── Knowledge compounding ─────────────────────────────────────────────────
@@ -734,18 +738,18 @@ COMPOUND_EOF
 # ── Cleanup session tracking files ────────────────────────────────────────
 cleanup_tracking() {
   if [ -n "$SESSION_ID" ]; then
-    rm -f ".claude/modified-files-${SESSION_ID}.txt"
+    rm -f "${REPO_ROOT}/.claude/modified-files-${SESSION_ID}.txt"
   fi
   # Clean up stale tracking + state files older than 24h
-  find .claude -name "modified-files-*.txt" -mmin +1440 -delete 2>/dev/null || true
-  find .claude -name "review-loop-*.local.md" -mmin +1440 -delete 2>/dev/null || true
+  find "${REPO_ROOT}/.claude" -name "modified-files-*.txt" -mmin +1440 -delete 2>/dev/null || true
+  find "${REPO_ROOT}/.claude" -name "review-loop-*.local.md" -mmin +1440 -delete 2>/dev/null || true
 }
 
 case "$PHASE" in
   task)
     # ── Phase 1 → 2: Run Codex multi-agent review ──────────────────────
-    REVIEW_FILE="reviews/review-${REVIEW_ID}.md"
-    mkdir -p reviews
+    REVIEW_FILE="${REPO_ROOT}/reviews/review-${REVIEW_ID}.md"
+    mkdir -p "${REPO_ROOT}/reviews"
 
     # Get scoped files for this agent
     SCOPED_FILES=$(get_scoped_files)
@@ -898,7 +902,7 @@ Use your own judgment. Do not blindly accept every suggestion."
 
     # Re-read scoped files for compound prompt
     SCOPED_FILES=$(get_scoped_files)
-    REVIEW_FILE="reviews/review-${REVIEW_ID}.md"
+    REVIEW_FILE="${REPO_ROOT}/reviews/review-${REVIEW_ID}.md"
 
     # Transition to compound phase
     if [[ "$OSTYPE" == "darwin"* ]]; then

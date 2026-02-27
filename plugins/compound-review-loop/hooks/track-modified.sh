@@ -9,7 +9,8 @@
 #
 # Receives JSON on stdin with tool_name and tool_input.file_path.
 
-LOG_FILE=".claude/review-loop.log"
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+LOG_FILE="${REPO_ROOT}/.claude/review-loop.log"
 log() { mkdir -p "$(dirname "$LOG_FILE")"; echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [track] $*" >> "$LOG_FILE"; }
 
 INPUT=$(cat)
@@ -28,7 +29,7 @@ esac
 [ -z "$FILE_PATH" ] && exit 0
 
 # Append to session-scoped tracking file
-TRACK_DIR=".claude"
+TRACK_DIR="${REPO_ROOT}/.claude"
 mkdir -p "$TRACK_DIR"
 TRACK_FILE="${TRACK_DIR}/modified-files-${SESSION_ID}.txt"
 
@@ -37,7 +38,7 @@ TRACK_FILE="${TRACK_DIR}/modified-files-${SESSION_ID}.txt"
 # First PostToolUse hook for a session claims it by writing session_id into the file.
 if [ -n "$SESSION_ID" ] && ! [ -f "$TRACK_FILE" ]; then
   CLAIMED=""
-  for sf in .claude/review-loop-*.local.md; do
+  for sf in "${REPO_ROOT}"/.claude/review-loop-*.local.md; do
     [ -f "$sf" ] || continue
     # Unclaimed = has no session_id line
     if ! grep -q "^session_id:" "$sf" 2>/dev/null; then
