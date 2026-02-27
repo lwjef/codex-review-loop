@@ -54,8 +54,9 @@ if ! command -v jq &> /dev/null; then
   exit 1
 fi
 
-# Clean stale state and tracking files from previous sessions
-rm -f .claude/review-loop-*.local.md .claude/modified-files-*.txt 2>/dev/null || true
+# Clean stale state and tracking files (>1 hour old, safe for parallel agents)
+find .claude -name "review-loop-*.local.md" -mmin +60 -delete 2>/dev/null || true
+find .claude -name "modified-files-*.txt" -mmin +60 -delete 2>/dev/null || true
 
 # Generate unique ID: timestamp + random hex
 # Prefer openssl, fallback to /dev/urandom

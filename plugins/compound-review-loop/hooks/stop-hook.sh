@@ -221,7 +221,7 @@ generate_scoped_map() {
 
   # Generate scoped map
   local MAP_OUTPUT
-  MAP_OUTPUT=$(codebase-map format --format "$MAP_FORMAT" "${MAP_ARGS[@]}" 2>/dev/null)
+  MAP_OUTPUT=$(codebase-map format --format "$MAP_FORMAT" "${MAP_ARGS[@]}" 2>/dev/null) || true
 
   if [ -n "$MAP_OUTPUT" ]; then
     local MAP_BYTES
@@ -639,7 +639,7 @@ resolve_output_dir() {
   # 2. Compound config (shared dir)
   if [ -f "compound.config.json" ]; then
     local dir
-    dir=$(jq -r '.outputDir // empty' compound.config.json 2>/dev/null)
+    dir=$(jq -r '.outputDir // empty' compound.config.json 2>/dev/null) || true
     if [ -n "$dir" ]; then
       echo "$dir"
       return
