@@ -818,7 +818,6 @@ Then run /review-loop again."
     # Codex stderr has: session header → thinking/exec traces → "codex\n<actual review>"
     if grep -q "^codex$" "$REVIEW_FILE" 2>/dev/null; then
       # Keep only content after the last "codex" line (the actual review)
-      local REVIEW_START
       REVIEW_START=$(grep -n "^codex$" "$REVIEW_FILE" | tail -1 | cut -d: -f1)
       if [ -n "$REVIEW_START" ]; then
         tail -n +"$((REVIEW_START + 1))" "$REVIEW_FILE" > "${REVIEW_FILE}.tmp"
