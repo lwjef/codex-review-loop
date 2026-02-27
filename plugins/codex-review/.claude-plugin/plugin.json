@@ -1,0 +1,10 @@
+{
+  "name": "codex-review",
+  "version": "2.0.0",
+  "description": "Parallel Codex code reviews for Claude Code. N independent agents (diff, security, tests, architecture) review your changes with project-aware context. Includes self-review, anti-pattern detection, and knowledge compounding.",
+  "author": {
+    "name": "Dmitry Korobtsov",
+    "url": "https://github.com/dkorobtsov"
+  },
+  "license": "MIT"
+}

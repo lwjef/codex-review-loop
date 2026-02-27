@@ -1,18 +1,20 @@
 {
   "name": "dkorobtsov-review",
   "owner": {
-    "name": "Dmitry Korobtsov"
+    "name": "Dmitry Korobtsov",
+    "url": "https://github.com/dkorobtsov"
   },
   "metadata": {
-    "description": "Automated code review loop plugin with file-scoped reviews, project convention injection, and AI anti-pattern detection"
+    "description": "Parallel Codex code reviews for Claude Code with self-review, anti-pattern detection, and knowledge compounding"
   },
   "plugins": [
     {
-      "name": "compound-review-loop",
-      "source": "./plugins/compound-review-loop",
-      "description": "Automated code review loop with file-scoped reviews. Claude implements, Codex reviews independently (only files this agent touched), Claude addresses feedback.",
+      "name": "codex-review",
+      "source": "./plugins/codex-review",
+      "description": "Parallel Codex code reviews for Claude Code. N independent agents (diff, security, tests, architecture) review your changes with project-aware context.",
       "author": {
-        "name": "Hamel Husain"
+        "name": "Dmitry Korobtsov",
+        "url": "https://github.com/dkorobtsov"
       }
     }
   ]

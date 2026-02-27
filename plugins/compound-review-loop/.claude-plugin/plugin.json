@@ -1,9 +1,0 @@
-{
-  "name": "compound-review-loop",
-  "version": "2.0.0",
-  "description": "Automated code review loop with file-scoped reviews, knowledge compounding, and AI anti-pattern detection. Claude implements, Codex reviews independently, Claude compounds learnings.",
-  "author": {
-    "name": "Dmitry Korobtsov"
-  },
-  "license": "MIT"
-}

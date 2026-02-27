@@ -5,7 +5,8 @@ allowed-tools:
   - Read
 ---
 
-Run the following script to get a Codex code review on current uncommitted changes. Uses custom prompt with project conventions and file scope — same review quality as the full review loop.
+Run the following script to get a Codex code review on current uncommitted changes. Uses custom prompt with project
+conventions and file scope — same review quality as the full review loop.
 
 ```bash
 set -e
@@ -118,4 +119,5 @@ echo "Codex exit=$CODEX_EXIT, elapsed=${ELAPSED}s"
 echo "Review: $REVIEW_FILE ($(wc -c < "$REVIEW_FILE" | tr -d ' ') bytes)"
 ```
 
-After the script completes, read the review file and present the findings to the user. For each finding, include severity, file path, and description.
+After the script completes, read the review file and present the findings to the user. For each finding, include severity,
+file path, and description.

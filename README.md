@@ -1,4 +1,4 @@
-# compound-review-loop (fork)
+# codex-review
 
 > Fork of [hamelsmu/claude-review-loop](https://github.com/hamelsmu/claude-review-loop) with parallel Codex reviews,
 > self-review, file-scoped reviews, knowledge compounding, and AI anti-pattern detection.
@@ -111,14 +111,14 @@ From the CLI:
 
 ```bash
 claude plugin marketplace add dkorobtsov/claude-review-loop
-claude plugin install compound-review-loop@dkorobtsov-review
+claude plugin install codex-review@dkorobtsov-review
 ```
 
 Or from within a Claude Code session:
 
 ```
 /plugin marketplace add dkorobtsov/claude-review-loop
-/plugin install compound-review-loop@dkorobtsov-review
+/plugin install codex-review@dkorobtsov-review
 ```
 
 ## Usage
@@ -192,7 +192,7 @@ Phase 3 (compound → done):
 ## File structure
 
 ```
-plugins/compound-review-loop/
+plugins/codex-review/
 ├── .claude-plugin/
 │   └── plugin.json                  # Plugin manifest
 ├── commands/

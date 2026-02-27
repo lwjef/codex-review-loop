@@ -1,4 +1,4 @@
-# compound-review-loop Plugin — Agent Guidelines
+# codex-review Plugin — Agent Guidelines
 
 ## Goal
 
