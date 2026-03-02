@@ -6,6 +6,20 @@
 A Claude Code plugin that adds automated review loops to your workflow. Every task gets independent reviews from multiple
 parallel Codex agents, and every review compounds knowledge back into the codebase.
 
+## Why this fork
+
+The original plugin reviews all uncommitted changes as a single diff. That works well for solo work on small repos, but
+breaks down in a large monorepo where multiple agents work in the same branch simultaneously — each agent's review picks up
+noise from everyone else's changes, and the reviewer has no module-level context.
+
+This fork scopes every review to the files that a particular agent actually touched. A `PostToolUse` hook tracks each
+Edit/Write operation per session, so when the stop hook fires, Codex only sees that agent's changes — not the entire diff.
+On top of that, we auto-derive a dependency map for the touched modules (via `codebase-map`) and inject it into the review
+prompt, giving each reviewer structural context for the code it's looking at.
+
+The result: several agents can work in parallel on different parts of a monorepo, each getting a focused, context-rich
+review of only their own work.
+
 ## What it does
 
 ### Always-on (every session)
