@@ -96,6 +96,9 @@ Each agent gets file scope + project conventions + category-specific criteria. O
 
 ## Requirements
 
+> **Heads up:** Each review loop spawns 4-5 parallel Codex processes. This burns through your OpenAI Codex token budget
+> fast — a single `/review-loop` cycle can use 10-50x more tokens than a normal Codex session. Monitor your usage.
+
 - [Claude Code](https://claude.ai/code) (CLI)
 - `jq` — `brew install jq` (macOS) / `apt install jq` (Linux)
 - [Codex CLI](https://github.com/openai/codex) — `npm install -g @openai/codex`
@@ -103,6 +106,7 @@ Each agent gets file scope + project conventions + category-specific criteria. O
 ### Optional
 
 - [codebase-map](https://www.npmjs.com/package/codebase-map) — `npm install -g codebase-map` (dependency maps)
+- [ruff](https://docs.astral.sh/ruff/) — `pip install ruff` (Python linting, auto-detected)
 
 ## Installation
 
@@ -238,5 +242,6 @@ Execution logs: `.claude/codex-review.log` (timestamps, codex exit codes, elapse
 ## Credits
 
 Original plugin by [Hamel Husain](https://github.com/hamelsmu). Compound engineering approach inspired by
-[Ryan Carson / Every](https://every.to/guides/compound-engineering). Self-review ported from
+[Ryan Carson's compound engineering loop](https://x.com/ryancarson/article/2016520542723924279). Knowledge compounding via
+AGENTS.md inspired by the [Intent Layer](https://intent-systems.com/blog/intent-layer) methodology. Self-review ported from
 [ClaudeKit](https://github.com/carlrannaberg/claudekit) by Carl Rannaberg.

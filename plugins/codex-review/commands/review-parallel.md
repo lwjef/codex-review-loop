@@ -18,6 +18,7 @@ echo "=== Parallel Codex Review: uncommitted changes ==="
 
 # 1. Prerequisites
 command -v codex >/dev/null 2>&1 || { echo "ERROR: codex not installed (npm install -g @openai/codex)"; exit 1; }
+command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not installed (brew install jq / apt install jq)"; exit 1; }
 
 # 2. Collect changed files
 FILES=$(git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null)

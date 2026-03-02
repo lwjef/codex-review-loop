@@ -37,6 +37,13 @@ log() {
 
 trap 'log "ERROR: hook exited via ERR trap (line $LINENO)"; printf "{\"decision\":\"approve\"}\n"; exit 0' ERR
 
+# ── Dependency check ─────────────────────────────────────────────────────
+if ! command -v jq &>/dev/null; then
+  log "SKIP: jq not installed"
+  printf '{"decision":"approve"}\n'
+  exit 0
+fi
+
 # Consume stdin (hook input JSON) — must read to avoid broken pipe
 HOOK_INPUT=$(cat)
 
