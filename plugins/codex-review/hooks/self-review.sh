@@ -86,15 +86,28 @@ fi
 # Check if the last assistant message already contains our marker.
 # If so, Claude already did a self-review this cycle — don't re-trigger.
 
+# ── Cleanup helper ────────────────────────────────────────────────────
+# Remove current session's tracking file on exit (prevents accumulation).
+# The stop-hook cleanup only runs during review-loop; self-review handles all other sessions.
+cleanup_tracking_file() {
+  if [ -n "$SESSION_ID" ]; then
+    rm -f "${REPO_ROOT}/.claude/modified-files-${SESSION_ID}.txt"
+  fi
+  # Also clean stale files from other sessions (>1 hour)
+  find "${REPO_ROOT}/.claude" -name "modified-files-*.txt" -mmin +60 -delete 2>/dev/null || true
+}
+
 LAST_MSG=$(echo "$HOOK_INPUT" | jq -r '.last_assistant_message // ""' 2>/dev/null || echo "")
 if echo "$LAST_MSG" | grep -qF "Self-Review Complete" 2>/dev/null; then
+  cleanup_tracking_file
   printf '{"decision":"approve"}\n'
   exit 0
 fi
 
 # ── Build self-review prompt with randomized questions ───────────────
 
-# 4 focus areas, 6-7 questions each. Pick one random question per area.
+# 4 focus areas, 6 questions each. Pick one random question per area.
+# Randomization prevents pattern fatigue — agents stop reading repeated prompts.
 pick_random() {
   local arr=("$@")
   local count=${#arr[@]}
@@ -116,9 +129,9 @@ Q2_POOL=(
   "Did you leave the code better than you found it?"
   "Is there duplicated logic that should be extracted?"
   "Are you using different patterns than the existing code uses?"
-  "Is the code more complex now than it needs to be?"
   "Did you clean up after making your changes work?"
-  "Is every piece of code still serving a clear purpose?"
+  "Can anything be simplified — fewer lines, fewer abstractions, fewer branches?"
+  "Did you add defensive code, error handling, or abstractions that aren't actually needed?"
 )
 
 Q3_POOL=(
@@ -146,20 +159,12 @@ Q4=$(pick_random "${Q4_POOL[@]}")
 
 REASON="## Self-Review
 
-You made code changes in this session. Before stopping, review these aspects of your work:
-
-**Implementation Completeness:**
+You made code changes in this session. Before stopping, check:
 - ${Q1}
-
-**Code Quality:**
 - ${Q2}
-
-**Integration & Refactoring:**
 - ${Q3}
-
-**Codebase Consistency:**
 - ${Q4}
 
-Address any concerns. If everything looks good, briefly confirm and end your message with **Self-Review Complete**."
+Address any concerns, then end with **Self-Review Complete**."
 
 jq -n --arg r "$REASON" '{decision:"block", reason:$r}'

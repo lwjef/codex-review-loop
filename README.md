@@ -13,12 +13,12 @@ breaks down in a large monorepo where multiple agents work in the same branch si
 noise from everyone else's changes, and the reviewer has no module-level context.
 
 This fork scopes every review to the files that a particular agent actually touched. A `PostToolUse` hook tracks each
-Edit/Write operation per session, so when the stop hook fires, Codex only sees that agent's changes — not the entire diff.
-On top of that, we auto-derive a dependency map for the touched modules (via `codebase-map`) and inject it into the review
+Edit/Write operation per session, so when the stop hook fires, Codex only sees that agent's changes — not the entire diff. On
+top of that, we auto-derive a dependency map for the touched modules (via `codebase-map`) and inject it into the review
 prompt, giving each reviewer structural context for the code it's looking at.
 
-The result: several agents can work in parallel on different parts of a monorepo, each getting a focused, context-rich
-review of only their own work.
+The result: several agents can work in parallel on different parts of a monorepo, each getting a focused, context-rich review
+of only their own work.
 
 ## What it does
 
@@ -110,8 +110,8 @@ Each agent gets file scope + project conventions + category-specific criteria. O
 
 ## Requirements
 
-> **Heads up:** Each review loop spawns 4-5 parallel Codex processes. This burns through your OpenAI Codex token budget
-> fast — a single `/review-loop` cycle can use 10-50x more tokens than a normal Codex session. Monitor your usage.
+> **Heads up:** Each review loop spawns 4-5 parallel Codex processes. This burns through your OpenAI Codex token budget fast
+> — a single `/review-loop` cycle can use 10-50x more tokens than a normal Codex session. Monitor your usage.
 
 - [Claude Code](https://claude.ai/code) (CLI)
 - `jq` — `brew install jq` (macOS) / `apt install jq` (Linux)
@@ -257,5 +257,5 @@ Execution logs: `.claude/codex-review.log` (timestamps, codex exit codes, elapse
 
 Original plugin by [Hamel Husain](https://github.com/hamelsmu). Compound engineering approach inspired by
 [Ryan Carson's compound engineering loop](https://x.com/ryancarson/article/2016520542723924279). Knowledge compounding via
-AGENTS.md inspired by the [Intent Layer](https://intent-systems.com/blog/intent-layer) methodology. Self-review ported from
+Self-review ported from
 [ClaudeKit](https://github.com/carlrannaberg/claudekit) by Carl Rannaberg.
