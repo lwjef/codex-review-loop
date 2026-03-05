@@ -43,55 +43,65 @@ for sf in "${REPO_ROOT}"/.claude/codex-review-*.local.md; do
   fi
 done
 
-# ── Check for file changes ───────────────────────────────────────────
+# ── Cleanup helper ────────────────────────────────────────────────────
+# Remove current session's tracking file on exit (prevents accumulation).
+# The stop-hook cleanup only runs during review-loop; self-review handles all other sessions.
+cleanup_tracking_file() {
+  local sid="$1"
+  if [ -n "$sid" ]; then
+    rm -f "${REPO_ROOT}/.claude/modified-files-${sid}.txt"
+  fi
+  # Also clean stale files from other sessions (>1 hour)
+  find "${REPO_ROOT}/.claude" -name "modified-files-*.txt" -mmin +60 -delete 2>/dev/null || true
+}
+
+# ── Check for file changes SINCE last self-review ────────────────────
+# Key insight: we only care about edits that happened AFTER the last
+# "Self-Review Complete" marker. Without this, the hook re-fires on
+# every stop even after the review is done (old edits still in transcript).
 
 SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+TRANSCRIPT=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
 HAS_CHANGES=false
 
-# Method 1: PostToolUse tracking file
-if [ -n "$SESSION_ID" ]; then
-  TRACK_FILE="${REPO_ROOT}/.claude/modified-files-${SESSION_ID}.txt"
-  if [ -f "$TRACK_FILE" ] && [ -s "$TRACK_FILE" ]; then
-    HAS_CHANGES=true
-  fi
+# Find the line number of the last "Self-Review Complete" marker in the transcript.
+# Everything before this line was already reviewed — only edits after it matter.
+MARKER_LINE=0
+if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+  # The marker appears in assistant messages as part of the tool_use_result reason field
+  # or in the assistant's own text output. Search for it in the raw JSONL.
+  MARKER_LINE=$(grep -nF "Self-Review Complete" "$TRANSCRIPT" 2>/dev/null | tail -1 | cut -d: -f1)
+  MARKER_LINE="${MARKER_LINE:-0}"
 fi
 
-# Method 2: Transcript parsing (fallback)
-# Only trigger on Edit/Write/MultiEdit/NotebookEdit in THIS session's transcript — not git diff.
-# Git diff catches other sessions' changes and fires self-review on pure conversations.
-if [ "$HAS_CHANGES" = "false" ]; then
-  TRANSCRIPT=$(echo "$HOOK_INPUT" | jq -r '.transcript_path // ""' 2>/dev/null || echo "")
-  if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+if [ "$MARKER_LINE" -gt 0 ] && [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+  # Scan only lines AFTER the marker for editing tool uses
+  if tail -n +"$((MARKER_LINE + 1))" "$TRANSCRIPT" | \
+     jq -e 'select(.tool_name == "Edit" or .tool_name == "Write" or .tool_name == "MultiEdit" or .tool_name == "NotebookEdit")' >/dev/null 2>&1; then
+    HAS_CHANGES=true
+  fi
+else
+  # No marker found — first review this session. Check full transcript.
+
+  # Method 1: PostToolUse tracking file
+  if [ -n "$SESSION_ID" ]; then
+    TRACK_FILE="${REPO_ROOT}/.claude/modified-files-${SESSION_ID}.txt"
+    if [ -f "$TRACK_FILE" ] && [ -s "$TRACK_FILE" ]; then
+      HAS_CHANGES=true
+    fi
+  fi
+
+  # Method 2: Full transcript scan (fallback)
+  if [ "$HAS_CHANGES" = "false" ] && [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     if jq -e 'select(.tool_name == "Edit" or .tool_name == "Write" or .tool_name == "MultiEdit" or .tool_name == "NotebookEdit")' "$TRANSCRIPT" >/dev/null 2>&1; then
       HAS_CHANGES=true
     fi
   fi
 fi
 
-# No changes → skip review
+# No changes since last review → skip
 if [ "$HAS_CHANGES" = "false" ]; then
-  printf '{"decision":"approve"}\n'
-  exit 0
-fi
-
-# ── Marker-based dedup ───────────────────────────────────────────────
-# Check if the last assistant message already contains our marker.
-# If so, Claude already did a self-review this cycle — don't re-trigger.
-
-# ── Cleanup helper ────────────────────────────────────────────────────
-# Remove current session's tracking file on exit (prevents accumulation).
-# The stop-hook cleanup only runs during review-loop; self-review handles all other sessions.
-cleanup_tracking_file() {
-  if [ -n "$SESSION_ID" ]; then
-    rm -f "${REPO_ROOT}/.claude/modified-files-${SESSION_ID}.txt"
-  fi
-  # Also clean stale files from other sessions (>1 hour)
-  find "${REPO_ROOT}/.claude" -name "modified-files-*.txt" -mmin +60 -delete 2>/dev/null || true
-}
-
-LAST_MSG=$(echo "$HOOK_INPUT" | jq -r '.last_assistant_message // ""' 2>/dev/null || echo "")
-if echo "$LAST_MSG" | grep -qF "Self-Review Complete" 2>/dev/null; then
-  cleanup_tracking_file
+  cleanup_tracking_file "$SESSION_ID"
   printf '{"decision":"approve"}\n'
   exit 0
 fi
