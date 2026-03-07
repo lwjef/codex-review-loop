@@ -34,14 +34,17 @@ if [ "$STOP_HOOK_ACTIVE" = "true" ]; then
   exit 0
 fi
 
-# Active codex-review session exists → let stop-hook.sh handle it
-for sf in "${REPO_ROOT}"/.claude/codex-review-*.local.md; do
-  [ -f "$sf" ] || continue
-  if grep -q "^active: true" "$sf" 2>/dev/null; then
+# Active codex-review session exists FOR THIS SESSION → let stop-hook.sh handle it
+# Only skip if the state file is claimed by THIS session (has our session_id).
+# Without this check, any agent in the repo would skip self-review when another
+# agent has an active review loop.
+SELF_SESSION_ID=$(echo "$HOOK_INPUT" | jq -r '.session_id // ""' 2>/dev/null || echo "")
+if [ -n "$SELF_SESSION_ID" ]; then
+  if grep -Fl "session_id: ${SELF_SESSION_ID}" "${REPO_ROOT}"/.claude/codex-review-*.local.md 2>/dev/null | head -1 | grep -q .; then
     printf '{"decision":"approve"}\n'
     exit 0
   fi
-done
+fi
 
 # ── Cleanup helper ────────────────────────────────────────────────────
 # Remove current session's tracking file on exit (prevents accumulation).

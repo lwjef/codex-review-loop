@@ -69,7 +69,10 @@ if [ -n "$SESSION_ID" ]; then
 fi
 
 # Try 2: fallback — find active state files
-if [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; then
+# ONLY if session_id was missing from the Stop event. If session_id was provided
+# but didn't match any state file, this session has no review loop — don't steal
+# another agent's state file.
+if { [ -z "$STATE_FILE" ] || [ ! -f "$STATE_FILE" ]; } && [ -z "$SESSION_ID" ]; then
   ACTIVE_FILES=""
   for sf in "${REPO_ROOT}"/.claude/codex-review-*.local.md; do
     [ -f "$sf" ] || continue
