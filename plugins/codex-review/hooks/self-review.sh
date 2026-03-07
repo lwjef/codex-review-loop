@@ -106,6 +106,43 @@ if [ "$HAS_CHANGES" = "false" ]; then
   exit 0
 fi
 
+# ── Skip non-code changes ────────────────────────────────────────────
+# Don't ask about mocks/tests/refactoring when only docs/config were edited.
+# Extract file paths from Edit/Write tool uses and check extensions.
+HAS_CODE_CHANGES=false
+NON_CODE_PATTERN='\.(md|txt|log)$'
+
+# Check tracking file first (fast path)
+if [ -n "$SESSION_ID" ]; then
+  TRACK_FILE="${REPO_ROOT}/.claude/modified-files-${SESSION_ID}.txt"
+  if [ -f "$TRACK_FILE" ] && [ -s "$TRACK_FILE" ]; then
+    if grep -qvE "$NON_CODE_PATTERN" "$TRACK_FILE" 2>/dev/null; then
+      HAS_CODE_CHANGES=true
+    fi
+  fi
+fi
+
+# Fallback: extract file_path from transcript tool uses
+if [ "$HAS_CODE_CHANGES" = "false" ] && [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
+  EDITED_FILES=""
+  if [ "$MARKER_LINE" -gt 0 ]; then
+    EDITED_FILES=$(tail -n +"$((MARKER_LINE + 1))" "$TRANSCRIPT" | \
+      jq -r 'select(.tool_name == "Edit" or .tool_name == "Write" or .tool_name == "MultiEdit" or .tool_name == "NotebookEdit") | .input.file_path // .input.path // empty' 2>/dev/null || true)
+  else
+    EDITED_FILES=$(jq -r 'select(.tool_name == "Edit" or .tool_name == "Write" or .tool_name == "MultiEdit" or .tool_name == "NotebookEdit") | .input.file_path // .input.path // empty' "$TRANSCRIPT" 2>/dev/null || true)
+  fi
+  if [ -n "$EDITED_FILES" ] && echo "$EDITED_FILES" | grep -qvE "$NON_CODE_PATTERN"; then
+    HAS_CODE_CHANGES=true
+  fi
+fi
+
+# Only docs/config changed → skip self-review
+if [ "$HAS_CODE_CHANGES" = "false" ]; then
+  cleanup_tracking_file "$SESSION_ID"
+  printf '{"decision":"approve"}\n'
+  exit 0
+fi
+
 # ── Build self-review prompt with randomized questions ───────────────
 
 # 4 focus areas, 6 questions each. Pick one random question per area.
