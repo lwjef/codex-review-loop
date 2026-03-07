@@ -15,35 +15,52 @@ set -e
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 cd "$REPO_ROOT"
 
-# ── Resolve plan file ───────────────────────────────────────────────
-PLAN_ARG="$1"
+# ── Resolve plan file(s) ──────────────────────────────────────────────
+# Accepts one or more file paths. Strips @ prefix (Claude Code file references).
+# Multiple files are concatenated with separators.
+PLAN_FILES=()
+for arg in "$@"; do
+  # Strip leading @ (Claude Code @file reference syntax)
+  arg="${arg#@}"
+  # Resolve relative to repo root
+  if [ ! -f "$arg" ] && [ -f "${REPO_ROOT}/${arg}" ]; then
+    arg="${REPO_ROOT}/${arg}"
+  fi
+  if [ -f "$arg" ]; then
+    PLAN_FILES+=("$arg")
+  else
+    echo "WARNING: Plan file not found, skipping: $arg"
+  fi
+done
 
-if [ -z "$PLAN_ARG" ]; then
-  echo "ERROR: Provide a path to the plan file."
-  echo "Usage: /review-plan path/to/plan.md"
+if [ ${#PLAN_FILES[@]} -eq 0 ]; then
+  echo "ERROR: No plan files found."
+  echo "Usage: /review-plan path/to/plan.md [path/to/plan2.md ...]"
   exit 1
 fi
 
-# Resolve relative to repo root
-if [ ! -f "$PLAN_ARG" ] && [ -f "${REPO_ROOT}/${PLAN_ARG}" ]; then
-  PLAN_ARG="${REPO_ROOT}/${PLAN_ARG}"
-fi
+# Concatenate all plan files
+PLAN_CONTENT=""
+for pf in "${PLAN_FILES[@]}"; do
+  if [ -n "$PLAN_CONTENT" ]; then
+    PLAN_CONTENT="${PLAN_CONTENT}
 
-if [ ! -f "$PLAN_ARG" ]; then
-  echo "ERROR: Plan file not found: $PLAN_ARG"
-  exit 1
-fi
+---
+"
+  fi
+  PLAN_CONTENT="${PLAN_CONTENT}$(cat "$pf")"
+done
 
-PLAN_CONTENT=$(cat "$PLAN_ARG")
 PLAN_LINES=$(echo "$PLAN_CONTENT" | wc -l | tr -d ' ')
 
 if [ "$PLAN_LINES" -lt 3 ]; then
-  echo "ERROR: Plan file too short ($PLAN_LINES lines). Provide a real plan."
+  echo "ERROR: Plan file(s) too short ($PLAN_LINES lines). Provide a real plan."
   exit 1
 fi
 
+PLAN_LABEL=$(printf '%s ' "${PLAN_FILES[@]}" | sed "s|${REPO_ROOT}/||g")
 echo "=== Pre-Implementation Risk Assessment ==="
-echo "Plan: $PLAN_ARG ($PLAN_LINES lines)"
+echo "Plan: ${PLAN_LABEL}(${#PLAN_FILES[@]} file(s), $PLAN_LINES lines)"
 
 # ── Prerequisites ───────────────────────────────────────────────────
 command -v codex >/dev/null 2>&1 || { echo "ERROR: codex not installed (npm install -g @openai/codex)"; exit 1; }
@@ -205,7 +222,7 @@ REPORT_FILE="${OUTDIR}/risk-report.md"
 {
   echo "# Pre-Implementation Risk Assessment — 4 Agents"
   echo ""
-  echo "Plan: $(basename "$PLAN_ARG") | Agents: 4 | Duration: ${ELAPSED}s"
+  echo "Plan: ${PLAN_LABEL}| Agents: 4 | Duration: ${ELAPSED}s"
   echo ""
 } > "$REPORT_FILE"
 
