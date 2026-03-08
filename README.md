@@ -136,14 +136,14 @@ Each agent gets file scope + project conventions + category-specific criteria. O
 From the CLI:
 
 ```bash
-claude plugin marketplace add dkorobtsov/codex-review
+claude plugin marketplace add dkorobtsov/codex-review-loop
 claude plugin install codex-review@dkorobtsov-review
 ```
 
 Or from within a Claude Code session:
 
 ```
-/plugin marketplace add dkorobtsov/codex-review
+/plugin marketplace add dkorobtsov/codex-review-loop
 /plugin install codex-review@dkorobtsov-review
 ```
 
