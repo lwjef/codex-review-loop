@@ -25,6 +25,7 @@ of only their own work.
 ### Always-on (every session)
 
 - **PostToolUse checks**: code→comment replacement detection, `_param` lazy refactoring detection
+- **Auto-format on save**: runs project formatter (prettier/biome/eslint/ruff/gofmt/rustfmt) after every Edit/Write
 - **Self-review**: randomized questions from 4 focus areas on every stop (implementation completeness, code quality,
   integration, codebase consistency)
 
@@ -204,6 +205,7 @@ Each agent explores the codebase (read-only) and maps risks against the plan. Ou
 | `track-modified.sh`            | PostToolUse (Edit/Write) | Yes        | Accumulate changed files per session   |
 | `check-comment-replacement.sh` | PostToolUse (Edit)       | Yes        | Block code→comment replacement         |
 | `check-unused-parameters.sh`   | PostToolUse (Edit)       | Yes        | Block `_param` lazy refactoring        |
+| `format-on-save.sh`            | PostToolUse (Edit/Write) | Yes        | Auto-format with project formatter     |
 | `self-review.sh`               | Stop                     | Yes        | Randomized self-review (4 focus areas) |
 | `stop-hook.sh`                 | Stop                     | Loop only  | N parallel Codex reviews + compounding |
 
@@ -240,6 +242,7 @@ plugins/codex-review/
 │   ├── track-modified.sh            # PostToolUse: file tracking
 │   ├── check-comment-replacement.sh # PostToolUse: code→comment check
 │   ├── check-unused-parameters.sh   # PostToolUse: _param check
+│   ├── format-on-save.sh            # PostToolUse: auto-format
 │   ├── self-review.sh               # Stop: always-on self-review
 │   └── stop-hook.sh                 # Stop: review + compound lifecycle
 ├── scripts/
@@ -261,6 +264,7 @@ plugins/codex-review/
 | `REVIEW_LOOP_SKIP_QUALITY_CHECKS` | `false`                                      | Skip parallel lint/typecheck            |
 | `REVIEW_LOOP_SKIP_MAP`            | `false`                                      | Skip codebase-map injection             |
 | `REVIEW_LOOP_SKIP_SELF_REVIEW`    | `false`                                      | Disable self-review hook                |
+| `REVIEW_LOOP_SKIP_FORMAT`         | `false`                                      | Disable auto-format on save             |
 | `REVIEW_LOOP_MAP_FORMAT`          | `graph`                                      | codebase-map format                     |
 
 ### Output directory

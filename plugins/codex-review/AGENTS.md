@@ -12,6 +12,7 @@ compounding. Each agent in a parallel swarm gets a focused review of only THEIR 
 | `track-modified.sh`            | PostToolUse (Edit/Write) | Track files this agent modified                         | Yes                      |
 | `check-comment-replacement.sh` | PostToolUse (Edit)       | Detect code→comment replacement                         | Yes                      |
 | `check-unused-parameters.sh`   | PostToolUse (Edit)       | Detect `_param` lazy refactoring                        | Yes                      |
+| `format-on-save.sh`            | PostToolUse (Edit/Write) | Auto-format with project formatter                      | Yes                      |
 | `self-review.sh`               | Stop                     | Randomized self-review questions (4 focus areas)        | Yes                      |
 | `stop-hook.sh`                 | Stop                     | N parallel Codex reviews + quality checks + compounding | Only with `/review-loop` |
 
